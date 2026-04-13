@@ -231,6 +231,197 @@ API running at `https://localhost:7037/swagger` with:
 
 ---
 
-## Session 2: (Next)
-**Planned:** MediatR CQRS setup + proper DTOs + Board/Task CRUD endpoints (Create, Update, Delete)
+## Session 2: MediatR CQRS + DTOs + CreateBoard Command
+**Date:** April 12, 2026
+**Goal:** Introduce CQRS pattern with MediatR, create proper DTOs, implement first Command with validation
+
+### Step 1: NuGet Packages Installed
+
+```bash
+dotnet add TaskFlow.Application package MediatR --version 12.*
+dotnet add TaskFlow.Application package FluentValidation.DependencyInjectionExtensions --version 11.*
+```
+
+| Package | Purpose |
+|---------|---------|
+| MediatR | Routes Commands/Queries to Handlers. Supports pipeline behaviors (middleware for MediatR). |
+| FluentValidation | Readable validation rules. `RuleFor(x => x.Name).NotEmpty().MaximumLength(100)` |
+
+### Step 2: What Is CQRS?
+
+**CQRS = Command Query Responsibility Segregation**
+- **Commands** = write operations (Create, Update, Delete). Change state, return Id or void.
+- **Queries** = read operations (Get, List). Return data, never modify state.
+
+**Benefits:**
+- Clear intent — `CreateBoardCommand` is obviously a write
+- Single Responsibility — each handler does ONE thing
+- Testable — handlers are pure classes
+- API layer stays thin: `app.MapPost(path, (cmd, mediator) => mediator.Send(cmd))`
+
+### Step 3: Folder Structure — Vertical Slice
+
+Organized by FEATURE, not by TYPE. Everything related to "Create Board" lives together:
+
+```
+TaskFlow.Application/
+├── Behaviors/
+│   └── ValidationBehavior.cs              # Auto-validates every command/query
+├── DTOs/
+│   └── BoardDto.cs                        # BoardDto, OwnerDto, ColumnDto, TaskItemDto (records)
+└── Features/
+    └── Boards/
+        └── Commands/
+            └── CreateBoard/
+                ├── CreateBoardCommand.cs         # IRequest<Guid> — the data
+                ├── CreateBoardCommandHandler.cs  # Where the logic lives
+                └── CreateBoardCommandValidator.cs # FluentValidation rules
+```
+
+**Why Vertical Slice?** As project grows, finding code for a feature is easy. All related files are in one folder. This is what you learned about in your .NET study plan's Day-35+36+37.
+
+### Step 4: Files Created — Explained
+
+#### DTOs (Data Transfer Objects)
+- `BoardDto`, `OwnerDto`, `ColumnDto`, `TaskItemDto` — all C# **records** (immutable, auto-equality)
+- Decouple API response shape from domain entities
+- If Board entity changes, DTO can stay stable = backward-compatible API
+
+#### CreateBoardCommand (the data)
+```csharp
+public record CreateBoardCommand(
+    string Name,
+    string? Description,
+    Guid UserId
+) : IRequest<Guid>;
+```
+- Record = immutable data
+- `IRequest<Guid>` = MediatR marker interface, `Guid` = the return type (new board's Id)
+
+#### CreateBoardCommandValidator (the rules)
+```csharp
+RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+RuleFor(x => x.Description).MaximumLength(500);
+RuleFor(x => x.UserId).NotEmpty();
+```
+- Runs automatically before handler (via ValidationBehavior)
+- Fails = throws `ValidationException` with property name + error message
+
+#### CreateBoardCommandHandler (the logic)
+```csharp
+public async Task<Guid> Handle(CreateBoardCommand request, CancellationToken ct)
+{
+    var board = new Board { Name = request.Name, ... };
+    board.Columns = [ /* 3 default columns auto-created */ ];
+    return (await _boardRepository.AddAsync(board)).Id;
+}
+```
+- Injects `IRepository<Board>` from DI
+- **Nice UX touch**: auto-creates "To Do", "In Progress", "Done" columns when board is created
+
+### Step 5: ValidationBehavior — MediatR Pipeline Magic
+
+`ValidationBehavior<TRequest, TResponse>` is a pipeline behavior = middleware for MediatR.
+
+**How it works:**
+1. DI injects ALL validators for the given request type
+2. Before the handler runs, run all validators
+3. If any fail → `throw new ValidationException(failures)`
+4. Handler NEVER runs if validation fails
+
+**Why this is powerful:**
+- Zero validation code in handlers — they just focus on business logic
+- Add a new Command + Validator → validation automatically wires up
+- Composable — can add LoggingBehavior, PerformanceBehavior, etc. the same way
+
+### Step 6: Program.cs — Wiring It Together
+
+```csharp
+// MediatR — scans assembly for Commands/Queries/Handlers
+builder.Services.AddMediatR(cfg =>
+    cfg.RegisterServicesFromAssembly(typeof(CreateBoardCommand).Assembly));
+
+// FluentValidation — auto-registers all validators
+builder.Services.AddValidatorsFromAssembly(typeof(CreateBoardCommand).Assembly);
+
+// Validation runs before EVERY command/query
+builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+```
+
+### Step 7: Global Exception Handler (app.Use Middleware)
+
+```csharp
+app.Use(async (context, next) =>
+{
+    try { await next(); }
+    catch (ValidationException vex)
+    {
+        context.Response.StatusCode = 400;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            type = "https://tools.ietf.org/html/rfc7807",
+            title = "Validation failed",
+            status = 400,
+            errors = vex.Errors.Select(e => new { e.PropertyName, e.ErrorMessage })
+        });
+    }
+});
+```
+
+**Key concepts:**
+- `app.Use` adds middleware to the HTTP pipeline
+- `await next()` passes request DOWNSTREAM to other middleware/endpoints
+- Any exception thrown downstream **bubbles UP** through the call stack
+- Our try/catch sits HIGH in the pipeline so it catches exceptions from anywhere
+- Returns **RFC 7807 ProblemDetails** format — industry-standard API error response
+
+### Exception Bubbling — Mental Model
+
+The **call stack** is a LIFO (last-in, first-out) stack of function calls. When an exception is thrown:
+1. Runtime checks current function — does it have a try/catch?
+2. If no, pop the frame off the stack, ask the CALLER
+3. Keep popping until SOMEONE catches it
+4. If nobody does, app crashes (500 Internal Server Error)
+
+**Our TaskFlow flow for a bad request:**
+```
+ValidationBehavior (throws)
+    ↑ bubbles up
+MediatR internals
+    ↑
+mediator.Send(command)
+    ↑
+MapPost lambda handler
+    ↑
+ASP.NET Core endpoint routing
+    ↑
+OUR app.Use(async (context, next) => { try... })  ← CAUGHT HERE
+```
+
+**Async/await note:** Even with async code, `await` re-throws exceptions from the awaited task to the awaiting method. So try/catch around `await next()` works for async-spanning calls.
+
+### Step 8: New Endpoint Added
+
+```csharp
+app.MapPost("/api/boards", async (CreateBoardCommand command, IMediator mediator) =>
+{
+    var boardId = await mediator.Send(command);
+    return Results.Created($"/api/boards/{boardId}", new { id = boardId });
+});
+```
+- ONE LINE sends to MediatR — no validation, no business logic, no DB code in the API layer
+- Returns **201 Created** with Location header pointing to the new resource (REST best practice)
+
+### Session 2 Milestone
+
+- ✅ POST /api/boards works — creates board with 3 auto-columns
+- ✅ Empty name / long description returns 400 with validation errors in ProblemDetails format
+- ✅ Handler classes are tiny and testable (no validation code inside)
+- ✅ CQRS + Pipeline Behaviors pattern in place
+
+### What's Next (Session 2 cont.)
+- UpdateBoardCommand, DeleteBoardCommand
+- CreateTaskCommand, UpdateTaskCommand, DeleteTaskCommand, MoveTaskCommand
+- Refactor existing GET endpoints to use MediatR Queries (GetBoardsQuery, GetBoardByIdQuery)
+- Proper DTO responses (replace anonymous objects)
 

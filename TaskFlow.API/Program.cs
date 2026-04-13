@@ -1,4 +1,8 @@
+using FluentValidation;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
+using TaskFlow.Application.Behaviors;
+using TaskFlow.Application.Features.Boards.Commands.CreateBoard;
 using TaskFlow.Domain.Interfaces;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Infrastructure.Data;
@@ -16,6 +20,16 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 // Register generic repository — any entity that extends BaseEntity gets a repo
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+
+// MediatR — scans TaskFlow.Application assembly for all Commands/Queries/Handlers
+builder.Services.AddMediatR(cfg =>
+    cfg.RegisterServicesFromAssembly(typeof(CreateBoardCommand).Assembly));
+
+// FluentValidation — auto-registers all validators from Application assembly
+builder.Services.AddValidatorsFromAssembly(typeof(CreateBoardCommand).Assembly);
+
+// Pipeline behavior — validation runs before EVERY command/query
+builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
 // OpenAPI/Swagger — .NET 9 built-in (no Swashbuckle needed!)
 builder.Services.AddOpenApi();
@@ -60,6 +74,27 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("AllowReactApp");
 app.UseHttpsRedirection();
+
+// Global exception handler — converts exceptions to RFC 7807 ProblemDetails JSON
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (ValidationException vex)
+    {
+        // FluentValidation failed — return 400 with details
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            type = "https://tools.ietf.org/html/rfc7807",
+            title = "Validation failed",
+            status = 400,
+            errors = vex.Errors.Select(e => new { e.PropertyName, e.ErrorMessage })
+        });
+    }
+});
 
 // ──────────────────────────────────────────────
 // 4. Minimal API Endpoints
@@ -150,6 +185,15 @@ app.MapGet("/api/boards/{id:guid}", async (Guid id, AppDbContext db) =>
     });
 })
 .WithName("GetBoardById")
+.WithTags("Boards");
+
+// POST /api/boards — create a new board (with 3 default columns auto-added)
+app.MapPost("/api/boards", async (CreateBoardCommand command, IMediator mediator) =>
+{
+    var boardId = await mediator.Send(command);
+    return Results.Created($"/api/boards/{boardId}", new { id = boardId });
+})
+.WithName("CreateBoard")
 .WithTags("Boards");
 
 app.Run();
