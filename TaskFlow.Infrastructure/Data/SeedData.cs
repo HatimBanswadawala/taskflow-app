@@ -1,32 +1,30 @@
 using TaskFlow.Domain.Entities;
 using TaskFlow.Domain.Enums;
+using TaskFlow.Domain.Interfaces;
 
 namespace TaskFlow.Infrastructure.Data;
 
 /// <summary>
 /// Seeds the InMemory database with demo data on app startup.
-/// Since InMemory DB resets on every restart, this ensures
-/// the app always has something to show.
+/// Now uses IPasswordHasher to properly hash the demo user's password.
 /// </summary>
 public static class SeedData
 {
-    public static void Initialize(AppDbContext context)
+    public static void Initialize(AppDbContext context, IPasswordHasher passwordHasher)
     {
-        // Don't seed if data already exists
         if (context.Users.Any()) return;
 
-        // Demo user (password: "Demo123!" — hashed later when we add auth)
+        // Demo user — password is "Demo123!" (properly hashed with BCrypt)
         var demoUser = new User
         {
             Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
             FullName = "Demo User",
             Email = "demo@taskflow.app",
-            PasswordHash = "placeholder-will-be-hashed-later"
+            PasswordHash = passwordHasher.Hash("Demo123!")
         };
 
         context.Users.Add(demoUser);
 
-        // Demo board
         var board = new Board
         {
             Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
@@ -37,7 +35,6 @@ public static class SeedData
 
         context.Boards.Add(board);
 
-        // Three default columns
         var todoColumn = new Column
         {
             Id = Guid.Parse("33333333-3333-3333-3333-333333333301"),
@@ -64,7 +61,6 @@ public static class SeedData
 
         context.Columns.AddRange(todoColumn, inProgressColumn, doneColumn);
 
-        // Sample tasks
         context.TaskItems.AddRange(
             new TaskItem
             {

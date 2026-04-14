@@ -550,6 +550,136 @@ Task Endpoints:
 
 ---
 
-## Session 3: (Next)
-**Planned:** JWT Authentication (register/login endpoints, auth middleware, protected routes)
+## Session 3: JWT Authentication
+**Date:** April 12, 2026
+**Goal:** Complete auth system — register, login, JWT tokens, protected endpoints
+
+### Step 1: Auth Interfaces in Domain
+
+```
+TaskFlow.Domain/Interfaces/
+├── IPasswordHasher.cs     # Hash(password) + Verify(password, hash)
+└── IJwtTokenService.cs    # GenerateToken(user) → JWT string
+```
+
+Domain defines WHAT it needs (interfaces). Infrastructure provides HOW (BCrypt + JWT).
+
+### Step 2: Infrastructure Implementations
+
+```
+TaskFlow.Infrastructure/Services/
+├── PasswordHasher.cs      # BCrypt with workFactor 12 (~250ms per hash)
+└── JwtTokenService.cs     # Builds JWT with claims, signs with HMAC-SHA256
+```
+
+**NuGet packages added to Infrastructure:**
+```bash
+dotnet add TaskFlow.Infrastructure package BCrypt.Net-Next --version 4.*
+dotnet add TaskFlow.Infrastructure package System.IdentityModel.Tokens.Jwt --version 8.*
+dotnet add TaskFlow.Infrastructure package Microsoft.Extensions.Configuration.Abstractions --version 9.0.*
+```
+
+**PasswordHasher:** BCrypt is "slow by design" — makes brute-force impractical. Salt is included in the hash automatically.
+
+**JwtTokenService — GenerateToken() flow:**
+1. Build claims (NameIdentifier, Email, Name, custom "uid")
+2. Create signing key from appsettings `Jwt:Key` (SymmetricSecurityKey)
+3. Create credentials (HMAC-SHA256 algorithm)
+4. Build JwtSecurityToken (issuer, audience, claims, 24hr expiry, credentials)
+5. Serialize to string with JwtSecurityTokenHandler
+
+**JWT token structure:** `HEADER.PAYLOAD.SIGNATURE` (Base64 encoded, NOT encrypted — anyone can read claims, but nobody can tamper without the secret key)
+
+### Step 3: appsettings.json — JWT Configuration
+
+```json
+"Jwt": {
+    "Key": "TaskFlow-Super-Secret-Key-That-Is-At-Least-32-Characters-Long-2026",
+    "Issuer": "TaskFlow.API",
+    "Audience": "TaskFlow.Client"
+}
+```
+In production, Key comes from Azure Key Vault / env vars — never committed. Fine for InMemory demo.
+
+### Step 4: Auth Commands (Register + Login)
+
+```
+TaskFlow.Application/Features/Auth/
+├── Commands/Register/
+│   ├── RegisterCommand.cs          # FullName, Email, Password → AuthResponseDto
+│   ├── RegisterCommandValidator.cs # Email format, password strength (uppercase + number + 6 chars)
+│   └── RegisterCommandHandler.cs   # Check duplicate email, hash password, save user, generate token
+└── Commands/Login/
+    ├── LoginCommand.cs             # Email, Password → AuthResponseDto
+    ├── LoginCommandValidator.cs    # Email + password not empty
+    └── LoginCommandHandler.cs      # Find user, verify BCrypt hash, generate token
+```
+
+**AuthResponseDto:** `{ Token, UserId, FullName, Email }` — frontend gets everything it needs in one response.
+
+**Security:** Both "email not found" and "wrong password" return same message `"Invalid email or password"` — prevents email enumeration attacks.
+
+### Step 5: JWT Validation (AddJwtBearer) — How Token Checking Works
+
+```csharp
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options => { ... TokenValidationParameters ... });
+```
+
+**Per-request validation flow:**
+1. Read `Authorization: Bearer <token>` header
+2. Split token into HEADER.PAYLOAD.SIGNATURE
+3. **Signature check:** Recalculate HMAC-SHA256(HEADER + PAYLOAD, our_secret_key), compare with SIGNATURE. Mismatch = tampered = 401
+4. **Lifetime check:** Read `exp` claim, compare with UtcNow. Expired = 401
+5. **Issuer check:** Read `iss` claim, compare with "TaskFlow.API". Mismatch = 401
+6. **Audience check:** Read `aud` claim, compare with "TaskFlow.Client". Mismatch = 401
+7. All passed → extract claims → set HttpContext.User → request proceeds
+
+**Middleware order matters:**
+```csharp
+app.UseAuthentication();  // First: reads token, sets User identity
+app.UseAuthorization();   // Second: checks if User has access to endpoint
+```
+Reverse = everything gets 401 (authorization checks before identity is established).
+
+### Step 6: Protected Endpoints
+
+- `AllowAnonymous()` — auth/register, auth/login, health check (public)
+- `RequireAuthorization()` — all board + task endpoints (JWT required)
+
+### Step 7: Global Exception Handler — Expanded
+
+Added catch blocks for:
+- `ValidationException` → 400 Bad Request (FluentValidation)
+- `UnauthorizedAccessException` → 401 Unauthorized (bad credentials)
+- `InvalidOperationException` → 409 Conflict (duplicate email, column not found)
+
+### Step 8: Swagger Authorize Button
+
+.NET 9 built-in OpenAPI doesn't auto-add the Authorize button. Added `AddDocumentTransformer` to configure Bearer security scheme in the OpenAPI document.
+
+```bash
+dotnet add TaskFlow.API package Microsoft.AspNetCore.OpenApi --version 9.0.*
+```
+
+### Step 9: SeedData Updated
+
+Demo user now uses real BCrypt hash instead of placeholder string. `SeedData.Initialize()` accepts `IPasswordHasher` parameter.
+
+### Session 3 Result
+
+- ✅ POST /api/auth/register — creates user, returns JWT
+- ✅ POST /api/auth/login — verifies password, returns JWT
+- ✅ GET /api/boards without token → 401
+- ✅ GET /api/boards with token → 200 + data
+- ✅ Swagger Authorize button works
+- ✅ Duplicate email → 409 Conflict
+- ✅ Bad password → 401 with generic message
+- ✅ Password validation (uppercase, number, 6+ chars)
+- ✅ Demo user login works (demo@taskflow.app / Demo123!)
+
+---
+
+## Session 4: (Next)
+**Planned:** React scaffolding (Vite + TypeScript + Tailwind + shadcn/ui + dark mode + theming)
 

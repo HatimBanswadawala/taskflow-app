@@ -1,7 +1,12 @@
+using System.Text;
 using FluentValidation;
 using MediatR;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using TaskFlow.Application.Behaviors;
+using TaskFlow.Application.Features.Auth.Commands.Login;
+using TaskFlow.Application.Features.Auth.Commands.Register;
 using TaskFlow.Application.Features.Boards.Commands.CreateBoard;
 using TaskFlow.Application.Features.Boards.Commands.DeleteBoard;
 using TaskFlow.Application.Features.Boards.Commands.UpdateBoard;
@@ -14,6 +19,7 @@ using TaskFlow.Application.Features.Tasks.Commands.UpdateTask;
 using TaskFlow.Domain.Interfaces;
 using TaskFlow.Infrastructure.Data;
 using TaskFlow.Infrastructure.Repositories;
+using TaskFlow.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,28 +30,75 @@ var builder = WebApplication.CreateBuilder(args);
 // EF Core InMemory Database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseInMemoryDatabase("TaskFlowDb"));
-
-// Also register the base DbContext type so Application layer query handlers
-// can inject it without referencing AppDbContext (Clean Architecture rule)
 builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
-// Generic repository — used by Command handlers
+// Repository + Auth services
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+builder.Services.AddScoped<IPasswordHasher, PasswordHasher>();
+builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 
-// MediatR — auto-discovers all Commands/Queries/Handlers in Application assembly
+// MediatR + FluentValidation
 builder.Services.AddMediatR(cfg =>
     cfg.RegisterServicesFromAssembly(typeof(CreateBoardCommand).Assembly));
-
-// FluentValidation — auto-registers all validators
 builder.Services.AddValidatorsFromAssembly(typeof(CreateBoardCommand).Assembly);
-
-// Validation pipeline — runs before EVERY command/query
 builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
-// OpenAPI/Swagger
-builder.Services.AddOpenApi();
+// JWT Authentication
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("Jwt:Key is not configured");
 
-// CORS for React frontend (Vite default port)
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+        };
+    });
+builder.Services.AddAuthorization();
+
+// OpenAPI/Swagger — with JWT bearer auth button in Swagger UI
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    {
+        // Add security scheme definition
+        document.Components ??= new Microsoft.OpenApi.Models.OpenApiComponents();
+        document.Components.SecuritySchemes["Bearer"] = new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+        {
+            Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            Description = "Enter your JWT token (without 'Bearer ' prefix)"
+        };
+
+        // Apply security requirement globally — shows the lock icon on all endpoints
+        document.SecurityRequirements.Add(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+        {
+            {
+                new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+                {
+                    Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                    {
+                        Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                        Id = "Bearer"
+                    }
+                },
+                Array.Empty<string>()
+            }
+        });
+
+        return Task.CompletedTask;
+    });
+});
+
+// CORS for React frontend
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
@@ -66,7 +119,8 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    SeedData.Initialize(context);
+    var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+    SeedData.Initialize(context, hasher);
 }
 
 // ──────────────────────────────────────────────
@@ -84,8 +138,10 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("AllowReactApp");
 app.UseHttpsRedirection();
+app.UseAuthentication(); // Must come before UseAuthorization
+app.UseAuthorization();
 
-// Global exception handler — RFC 7807 ProblemDetails
+// Global exception handler
 app.Use(async (context, next) =>
 {
     try
@@ -103,99 +159,139 @@ app.Use(async (context, next) =>
             errors = vex.Errors.Select(e => new { e.PropertyName, e.ErrorMessage })
         });
     }
+    catch (UnauthorizedAccessException)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            type = "https://tools.ietf.org/html/rfc7807",
+            title = "Authentication failed",
+            status = 401,
+            errors = new[] { new { PropertyName = "credentials", ErrorMessage = "Invalid email or password" } }
+        });
+    }
+    catch (InvalidOperationException ex)
+    {
+        context.Response.StatusCode = StatusCodes.Status409Conflict;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            type = "https://tools.ietf.org/html/rfc7807",
+            title = "Conflict",
+            status = 409,
+            errors = new[] { new { PropertyName = "request", ErrorMessage = ex.Message } }
+        });
+    }
 });
 
 // ──────────────────────────────────────────────
 // 4. Endpoints
 // ──────────────────────────────────────────────
 
-// Health check
+// Health check (public)
 app.MapGet("/", () => Results.Ok(new { status = "healthy", app = "TaskFlow API", version = "1.0" }))
    .WithName("HealthCheck")
    .WithTags("Health");
 
-// ─── Board Endpoints (now all MediatR-based) ───
+// ─── Auth Endpoints (public — no auth required) ───
 
-// GET /api/boards — list all boards
+app.MapPost("/api/auth/register", async (RegisterCommand command, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    return Results.Ok(result);
+})
+.WithName("Register")
+.WithTags("Auth")
+.AllowAnonymous();
+
+app.MapPost("/api/auth/login", async (LoginCommand command, IMediator mediator) =>
+{
+    var result = await mediator.Send(command);
+    return Results.Ok(result);
+})
+.WithName("Login")
+.WithTags("Auth")
+.AllowAnonymous();
+
+// ─── Board Endpoints (protected — JWT required) ───
+
 app.MapGet("/api/boards", async (IMediator mediator) =>
     Results.Ok(await mediator.Send(new GetBoardsQuery())))
 .WithName("GetAllBoards")
-.WithTags("Boards");
+.WithTags("Boards")
+.RequireAuthorization();
 
-// GET /api/boards/{id} — single board by Id
 app.MapGet("/api/boards/{id:guid}", async (Guid id, IMediator mediator) =>
 {
     var board = await mediator.Send(new GetBoardByIdQuery(id));
     return board is null ? Results.NotFound(new { error = "Board not found" }) : Results.Ok(board);
 })
 .WithName("GetBoardById")
-.WithTags("Boards");
+.WithTags("Boards")
+.RequireAuthorization();
 
-// POST /api/boards — create new board (auto-creates 3 default columns)
 app.MapPost("/api/boards", async (CreateBoardCommand command, IMediator mediator) =>
 {
     var boardId = await mediator.Send(command);
     return Results.Created($"/api/boards/{boardId}", new { id = boardId });
 })
 .WithName("CreateBoard")
-.WithTags("Boards");
+.WithTags("Boards")
+.RequireAuthorization();
 
-// PUT /api/boards/{id} — update board name/description
 app.MapPut("/api/boards/{id:guid}", async (Guid id, UpdateBoardCommand command, IMediator mediator) =>
 {
-    // Ensure URL Id matches body Id (override if needed)
-    var commandWithId = command with { Id = id };
-    var updated = await mediator.Send(commandWithId);
+    var updated = await mediator.Send(command with { Id = id });
     return updated ? Results.NoContent() : Results.NotFound(new { error = "Board not found" });
 })
 .WithName("UpdateBoard")
-.WithTags("Boards");
+.WithTags("Boards")
+.RequireAuthorization();
 
-// DELETE /api/boards/{id} — delete board (cascades to columns + tasks)
 app.MapDelete("/api/boards/{id:guid}", async (Guid id, IMediator mediator) =>
 {
     var deleted = await mediator.Send(new DeleteBoardCommand(id));
     return deleted ? Results.NoContent() : Results.NotFound(new { error = "Board not found" });
 })
 .WithName("DeleteBoard")
-.WithTags("Boards");
+.WithTags("Boards")
+.RequireAuthorization();
 
-// ─── Task Endpoints ───
+// ─── Task Endpoints (protected — JWT required) ───
 
-// POST /api/tasks — create a task in a column
 app.MapPost("/api/tasks", async (CreateTaskCommand command, IMediator mediator) =>
 {
     var taskId = await mediator.Send(command);
     return Results.Created($"/api/tasks/{taskId}", new { id = taskId });
 })
 .WithName("CreateTask")
-.WithTags("Tasks");
+.WithTags("Tasks")
+.RequireAuthorization();
 
-// PUT /api/tasks/{id} — update task details
 app.MapPut("/api/tasks/{id:guid}", async (Guid id, UpdateTaskCommand command, IMediator mediator) =>
 {
     var updated = await mediator.Send(command with { Id = id });
     return updated ? Results.NoContent() : Results.NotFound(new { error = "Task not found" });
 })
 .WithName("UpdateTask")
-.WithTags("Tasks");
+.WithTags("Tasks")
+.RequireAuthorization();
 
-// DELETE /api/tasks/{id} — delete a task
 app.MapDelete("/api/tasks/{id:guid}", async (Guid id, IMediator mediator) =>
 {
     var deleted = await mediator.Send(new DeleteTaskCommand(id));
     return deleted ? Results.NoContent() : Results.NotFound(new { error = "Task not found" });
 })
 .WithName("DeleteTask")
-.WithTags("Tasks");
+.WithTags("Tasks")
+.RequireAuthorization();
 
-// PUT /api/tasks/{id}/move — move task to different column (drag-and-drop)
 app.MapPut("/api/tasks/{id:guid}/move", async (Guid id, MoveTaskCommand command, IMediator mediator) =>
 {
     var moved = await mediator.Send(command with { TaskId = id });
     return moved ? Results.NoContent() : Results.NotFound(new { error = "Task or column not found" });
 })
 .WithName("MoveTask")
-.WithTags("Tasks");
+.WithTags("Tasks")
+.RequireAuthorization();
 
 app.Run();
