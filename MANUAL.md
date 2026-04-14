@@ -419,9 +419,137 @@ app.MapPost("/api/boards", async (CreateBoardCommand command, IMediator mediator
 - ✅ Handler classes are tiny and testable (no validation code inside)
 - ✅ CQRS + Pipeline Behaviors pattern in place
 
-### What's Next (Session 2 cont.)
-- UpdateBoardCommand, DeleteBoardCommand
-- CreateTaskCommand, UpdateTaskCommand, DeleteTaskCommand, MoveTaskCommand
-- Refactor existing GET endpoints to use MediatR Queries (GetBoardsQuery, GetBoardByIdQuery)
-- Proper DTO responses (replace anonymous objects)
+### Step 9: Board CRUD Complete (Update + Delete)
+
+**Files created:**
+```
+Features/Boards/Commands/UpdateBoard/
+    ├── UpdateBoardCommand.cs          # IRequest<bool> — Name, Description, Id
+    ├── UpdateBoardCommandValidator.cs  # Id not empty, Name required, max lengths
+    └── UpdateBoardCommandHandler.cs    # Finds board, updates fields, saves
+
+Features/Boards/Commands/DeleteBoard/
+    ├── DeleteBoardCommand.cs          # IRequest<bool> — just Id
+    ├── DeleteBoardCommandValidator.cs  # Id not empty
+    └── DeleteBoardCommandHandler.cs    # Finds board, deletes (cascade removes columns + tasks)
+```
+
+### Step 10: MediatR Queries — Replacing Anonymous Objects with DTOs
+
+**Problem solved:** Old GET endpoints used `AppDbContext` directly in Program.cs with anonymous objects. Now they use proper MediatR queries returning typed DTOs.
+
+**Files created:**
+```
+Features/Boards/Queries/GetBoards/
+    ├── GetBoardsQuery.cs              # IRequest<IEnumerable<BoardDto>>
+    └── GetBoardsQueryHandler.cs       # Uses DbContext + BoardMapper
+
+Features/Boards/Queries/GetBoardById/
+    ├── GetBoardByIdQuery.cs           # IRequest<BoardDto?>
+    └── GetBoardByIdQueryHandler.cs    # Returns null if not found
+```
+
+**Key design pattern — Commands vs Queries use different data access:**
+- Commands → use `IRepository<T>` (simple CRUD, abstracted)
+- Queries → use `DbContext` directly (need `.Include()`, projections, joins)
+
+**Clean Architecture trick for DbContext in Application layer:**
+```csharp
+// In Program.cs — register base DbContext as alias to AppDbContext
+builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>());
+```
+This is a **factory registration** — when Application asks for `DbContext`, DI gives the existing `AppDbContext` instance. Same object, different type. Application never references Infrastructure.
+
+### Step 11: BoardMapper — DRY Mapping
+
+**File:** `TaskFlow.Application/Mappers/BoardMapper.cs`
+
+Extension methods (`ToDto()`) on Board, Column, TaskItem entities. Avoids duplicating the DTO mapping logic across query handlers.
+
+```csharp
+var boards = await _db.Set<Board>()...ToListAsync();
+return boards.Select(b => b.ToDto()); // Clean, one line
+```
+
+### Step 12: Task CRUD — Commands + Handlers + Validators
+
+**NuGet package added:**
+```bash
+dotnet add TaskFlow.Application package Microsoft.EntityFrameworkCore --version 9.0.*
+```
+Needed because Task handlers use `DbContext` directly (same pattern as queries).
+
+**Files created:**
+```
+Features/Tasks/Commands/CreateTask/
+    ├── CreateTaskCommand.cs           # Title, Description, Priority, ColumnId, AssignedToId, DueDate
+    ├── CreateTaskCommandValidator.cs  # Title required, ColumnId required, DueDate must be future
+    └── CreateTaskCommandHandler.cs    # Verifies column exists, auto-positions at bottom of column
+
+Features/Tasks/Commands/UpdateTask/
+    ├── UpdateTaskCommand.cs           # Id, Title, Description, Priority, DueDate, AssignedToId
+    ├── UpdateTaskCommandValidator.cs  # Id + Title required, Priority valid enum
+    └── UpdateTaskCommandHandler.cs    # Finds task, updates fields, sets UpdatedAt
+
+Features/Tasks/Commands/DeleteTask/
+    ├── DeleteTaskCommand.cs           # Just Id
+    └── DeleteTaskCommandHandler.cs    # Finds and removes
+
+Features/Tasks/Commands/MoveTask/
+    ├── MoveTaskCommand.cs             # TaskId, TargetColumnId, NewPosition
+    ├── MoveTaskCommandValidator.cs    # All required, Position >= 0
+    └── MoveTaskCommandHandler.cs      # THE MOST COMPLEX HANDLER (see below)
+```
+
+**MoveTaskCommandHandler — drag-and-drop backend logic:**
+1. Validates task and target column exist
+2. If moving to different column: reorders source column (close the gap)
+3. Reorders target column (make room at new position)
+4. Updates task's ColumnId and Position
+5. **Smart UX:** Auto-updates task Status based on target column name:
+   - Drop in "To Do" → `TaskItemStatus.Todo`
+   - Drop in "In Progress" → `TaskItemStatus.InProgress`
+   - Drop in "Done" → `TaskItemStatus.Done`
+   - Custom column → keeps current status
+
+### Step 13: Program.cs — All Endpoints Now MediatR-Based
+
+```
+Board Endpoints:
+  GET    /api/boards          → mediator.Send(new GetBoardsQuery())
+  GET    /api/boards/{id}     → mediator.Send(new GetBoardByIdQuery(id))
+  POST   /api/boards          → mediator.Send(command)
+  PUT    /api/boards/{id}     → mediator.Send(command with { Id = id })
+  DELETE /api/boards/{id}     → mediator.Send(new DeleteBoardCommand(id))
+
+Task Endpoints:
+  POST   /api/tasks           → mediator.Send(command)
+  PUT    /api/tasks/{id}      → mediator.Send(command with { Id = id })
+  DELETE /api/tasks/{id}      → mediator.Send(new DeleteTaskCommand(id))
+  PUT    /api/tasks/{id}/move → mediator.Send(command with { TaskId = id })
+```
+
+**Every endpoint is 1-3 lines.** All business logic lives in handlers. API layer is pure routing.
+
+**REST conventions used:**
+- POST → 201 Created with Location header
+- PUT/DELETE → 204 NoContent on success
+- Not found → 404 with error object
+- Validation failure → 400 with ProblemDetails (handled by global middleware)
+
+### Session 2 Result
+
+- ✅ Full Board CRUD (Create, Read, Update, Delete)
+- ✅ Full Task CRUD (Create, Update, Delete, Move)
+- ✅ MediatR CQRS pattern across all endpoints
+- ✅ FluentValidation on all commands (auto via pipeline behavior)
+- ✅ Proper DTOs replacing anonymous objects
+- ✅ BoardMapper for DRY entity-to-DTO conversion
+- ✅ Drag-and-drop backend (MoveTask with auto-status update)
+- ✅ 9 total API endpoints, all Swagger-testable
+
+---
+
+## Session 3: (Next)
+**Planned:** JWT Authentication (register/login endpoints, auth middleware, protected routes)
 

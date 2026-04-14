@@ -3,8 +3,15 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Behaviors;
 using TaskFlow.Application.Features.Boards.Commands.CreateBoard;
+using TaskFlow.Application.Features.Boards.Commands.DeleteBoard;
+using TaskFlow.Application.Features.Boards.Commands.UpdateBoard;
+using TaskFlow.Application.Features.Boards.Queries.GetBoardById;
+using TaskFlow.Application.Features.Boards.Queries.GetBoards;
+using TaskFlow.Application.Features.Tasks.Commands.CreateTask;
+using TaskFlow.Application.Features.Tasks.Commands.DeleteTask;
+using TaskFlow.Application.Features.Tasks.Commands.MoveTask;
+using TaskFlow.Application.Features.Tasks.Commands.UpdateTask;
 using TaskFlow.Domain.Interfaces;
-using TaskFlow.Domain.Entities;
 using TaskFlow.Infrastructure.Data;
 using TaskFlow.Infrastructure.Repositories;
 
@@ -14,35 +21,39 @@ var builder = WebApplication.CreateBuilder(args);
 // 1. Register Services (Dependency Injection)
 // ──────────────────────────────────────────────
 
-// EF Core InMemory Database — data lives in memory, resets on app restart
+// EF Core InMemory Database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseInMemoryDatabase("TaskFlowDb"));
 
-// Register generic repository — any entity that extends BaseEntity gets a repo
+// Also register the base DbContext type so Application layer query handlers
+// can inject it without referencing AppDbContext (Clean Architecture rule)
+builder.Services.AddScoped<DbContext>(sp => sp.GetRequiredService<AppDbContext>());
+
+// Generic repository — used by Command handlers
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 
-// MediatR — scans TaskFlow.Application assembly for all Commands/Queries/Handlers
+// MediatR — auto-discovers all Commands/Queries/Handlers in Application assembly
 builder.Services.AddMediatR(cfg =>
     cfg.RegisterServicesFromAssembly(typeof(CreateBoardCommand).Assembly));
 
-// FluentValidation — auto-registers all validators from Application assembly
+// FluentValidation — auto-registers all validators
 builder.Services.AddValidatorsFromAssembly(typeof(CreateBoardCommand).Assembly);
 
-// Pipeline behavior — validation runs before EVERY command/query
+// Validation pipeline — runs before EVERY command/query
 builder.Services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
-// OpenAPI/Swagger — .NET 9 built-in (no Swashbuckle needed!)
+// OpenAPI/Swagger
 builder.Services.AddOpenApi();
 
-// CORS — needed later when React frontend calls this API
+// CORS for React frontend (Vite default port)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
     {
-        policy.WithOrigins("http://localhost:5173") // Vite dev server default port
+        policy.WithOrigins("http://localhost:5173")
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials(); // Needed for SignalR later
+              .AllowCredentials();
     });
 });
 
@@ -65,7 +76,6 @@ using (var scope = app.Services.CreateScope())
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    // Swagger UI — visit /swagger to see all endpoints
     app.UseSwaggerUI(options =>
     {
         options.SwaggerEndpoint("/openapi/v1.json", "TaskFlow API v1");
@@ -75,7 +85,7 @@ if (app.Environment.IsDevelopment())
 app.UseCors("AllowReactApp");
 app.UseHttpsRedirection();
 
-// Global exception handler — converts exceptions to RFC 7807 ProblemDetails JSON
+// Global exception handler — RFC 7807 ProblemDetails
 app.Use(async (context, next) =>
 {
     try
@@ -84,7 +94,6 @@ app.Use(async (context, next) =>
     }
     catch (ValidationException vex)
     {
-        // FluentValidation failed — return 400 with details
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         await context.Response.WriteAsJsonAsync(new
         {
@@ -97,97 +106,32 @@ app.Use(async (context, next) =>
 });
 
 // ──────────────────────────────────────────────
-// 4. Minimal API Endpoints
+// 4. Endpoints
 // ──────────────────────────────────────────────
 
-// Health check — quick way to verify API is running
+// Health check
 app.MapGet("/", () => Results.Ok(new { status = "healthy", app = "TaskFlow API", version = "1.0" }))
    .WithName("HealthCheck")
    .WithTags("Health");
 
-// GET /api/boards — return all boards with their columns and tasks
-app.MapGet("/api/boards", async (AppDbContext db) =>
-{
-    var boards = await db.Boards
-        .Include(b => b.Columns.OrderBy(c => c.Position))
-            .ThenInclude(c => c.Tasks.OrderBy(t => t.Position))
-        .Include(b => b.User)
-        .ToListAsync();
+// ─── Board Endpoints (now all MediatR-based) ───
 
-    // Map to anonymous object to control what gets returned (no circular refs)
-    var result = boards.Select(b => new
-    {
-        b.Id,
-        b.Name,
-        b.Description,
-        b.CreatedAt,
-        Owner = new { b.User.Id, b.User.FullName, b.User.Email },
-        Columns = b.Columns.Select(c => new
-        {
-            c.Id,
-            c.Name,
-            c.Position,
-            Tasks = c.Tasks.Select(t => new
-            {
-                t.Id,
-                t.Title,
-                t.Description,
-                Priority = t.Priority.ToString(),
-                Status = t.Status.ToString(),
-                t.DueDate,
-                t.Position,
-                t.AssignedToId
-            })
-        })
-    });
-
-    return Results.Ok(result);
-})
+// GET /api/boards — list all boards
+app.MapGet("/api/boards", async (IMediator mediator) =>
+    Results.Ok(await mediator.Send(new GetBoardsQuery())))
 .WithName("GetAllBoards")
 .WithTags("Boards");
 
-// GET /api/boards/{id} — return a single board with everything
-app.MapGet("/api/boards/{id:guid}", async (Guid id, AppDbContext db) =>
+// GET /api/boards/{id} — single board by Id
+app.MapGet("/api/boards/{id:guid}", async (Guid id, IMediator mediator) =>
 {
-    var board = await db.Boards
-        .Include(b => b.Columns.OrderBy(c => c.Position))
-            .ThenInclude(c => c.Tasks.OrderBy(t => t.Position))
-        .Include(b => b.User)
-        .FirstOrDefaultAsync(b => b.Id == id);
-
-    if (board is null)
-        return Results.NotFound(new { error = "Board not found" });
-
-    return Results.Ok(new
-    {
-        board.Id,
-        board.Name,
-        board.Description,
-        board.CreatedAt,
-        Owner = new { board.User.Id, board.User.FullName, board.User.Email },
-        Columns = board.Columns.Select(c => new
-        {
-            c.Id,
-            c.Name,
-            c.Position,
-            Tasks = c.Tasks.Select(t => new
-            {
-                t.Id,
-                t.Title,
-                t.Description,
-                Priority = t.Priority.ToString(),
-                Status = t.Status.ToString(),
-                t.DueDate,
-                t.Position,
-                t.AssignedToId
-            })
-        })
-    });
+    var board = await mediator.Send(new GetBoardByIdQuery(id));
+    return board is null ? Results.NotFound(new { error = "Board not found" }) : Results.Ok(board);
 })
 .WithName("GetBoardById")
 .WithTags("Boards");
 
-// POST /api/boards — create a new board (with 3 default columns auto-added)
+// POST /api/boards — create new board (auto-creates 3 default columns)
 app.MapPost("/api/boards", async (CreateBoardCommand command, IMediator mediator) =>
 {
     var boardId = await mediator.Send(command);
@@ -195,5 +139,63 @@ app.MapPost("/api/boards", async (CreateBoardCommand command, IMediator mediator
 })
 .WithName("CreateBoard")
 .WithTags("Boards");
+
+// PUT /api/boards/{id} — update board name/description
+app.MapPut("/api/boards/{id:guid}", async (Guid id, UpdateBoardCommand command, IMediator mediator) =>
+{
+    // Ensure URL Id matches body Id (override if needed)
+    var commandWithId = command with { Id = id };
+    var updated = await mediator.Send(commandWithId);
+    return updated ? Results.NoContent() : Results.NotFound(new { error = "Board not found" });
+})
+.WithName("UpdateBoard")
+.WithTags("Boards");
+
+// DELETE /api/boards/{id} — delete board (cascades to columns + tasks)
+app.MapDelete("/api/boards/{id:guid}", async (Guid id, IMediator mediator) =>
+{
+    var deleted = await mediator.Send(new DeleteBoardCommand(id));
+    return deleted ? Results.NoContent() : Results.NotFound(new { error = "Board not found" });
+})
+.WithName("DeleteBoard")
+.WithTags("Boards");
+
+// ─── Task Endpoints ───
+
+// POST /api/tasks — create a task in a column
+app.MapPost("/api/tasks", async (CreateTaskCommand command, IMediator mediator) =>
+{
+    var taskId = await mediator.Send(command);
+    return Results.Created($"/api/tasks/{taskId}", new { id = taskId });
+})
+.WithName("CreateTask")
+.WithTags("Tasks");
+
+// PUT /api/tasks/{id} — update task details
+app.MapPut("/api/tasks/{id:guid}", async (Guid id, UpdateTaskCommand command, IMediator mediator) =>
+{
+    var updated = await mediator.Send(command with { Id = id });
+    return updated ? Results.NoContent() : Results.NotFound(new { error = "Task not found" });
+})
+.WithName("UpdateTask")
+.WithTags("Tasks");
+
+// DELETE /api/tasks/{id} — delete a task
+app.MapDelete("/api/tasks/{id:guid}", async (Guid id, IMediator mediator) =>
+{
+    var deleted = await mediator.Send(new DeleteTaskCommand(id));
+    return deleted ? Results.NoContent() : Results.NotFound(new { error = "Task not found" });
+})
+.WithName("DeleteTask")
+.WithTags("Tasks");
+
+// PUT /api/tasks/{id}/move — move task to different column (drag-and-drop)
+app.MapPut("/api/tasks/{id:guid}/move", async (Guid id, MoveTaskCommand command, IMediator mediator) =>
+{
+    var moved = await mediator.Send(command with { TaskId = id });
+    return moved ? Results.NoContent() : Results.NotFound(new { error = "Task or column not found" });
+})
+.WithName("MoveTask")
+.WithTags("Tasks");
 
 app.Run();
