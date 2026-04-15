@@ -2,7 +2,8 @@
 
 > **What is this?** A step-by-step technical journal documenting every decision, command, and concept used to build TaskFlow from scratch. Written so that even 2-3 years from now, you can pick this up and rebuild a similar project — or understand exactly what was done and why.
 
-> **Tech Stack:** .NET 9 + React 18 + TypeScript + EF Core InMemory + SignalR + Tailwind + shadcn/ui
+> **Tech Stack:** .NET 9 + React 18 + JavaScript (JSX) + EF Core InMemory + SignalR + Tailwind + shadcn/ui
+> **Note:** Frontend uses pure JavaScript (.jsx), NOT TypeScript. Resume skill focus: React + JS.
 
 > **Started:** April 11, 2026
 > **Author:** Hatim Banswadawala (with Claude as coding partner)
@@ -680,6 +681,100 @@ Demo user now uses real BCrypt hash instead of placeholder string. `SeedData.Ini
 
 ---
 
-## Session 4: (Next)
-**Planned:** React scaffolding (Vite + TypeScript + Tailwind + shadcn/ui + dark mode + theming)
+## Session 4: React Scaffolding (Vite + JavaScript + Tailwind)
+**Date:** April 14, 2026
+**Goal:** Set up React frontend with clean structure, dark mode, and API client ready
+
+### Key Decision: JavaScript over TypeScript
+Initially scaffolded with TypeScript, then switched to pure JavaScript. Reason: Hatim's resume focus is React + JS. Files use `.jsx` extension. React study booklets (Q1-Q36) will be updated to JS later.
+
+### Step 1: Scaffold Vite Project
+```powershell
+cd C:\Users\hbanswadawala\Desktop\InterviewPrep\TaskFlow
+npm create vite@latest client -- --template react
+cd client
+npm install
+```
+Creates `client/` folder with React 18 + Vite + JavaScript baseline.
+
+### Step 2: Install Tailwind CSS v4
+```bash
+npm install tailwindcss @tailwindcss/vite
+```
+Tailwind v4 (2025 release) — no config files needed. Uses native Vite plugin and `@import "tailwindcss"` in CSS.
+
+### Step 3: Configure vite.config.js
+Added 3 things:
+- **Tailwind plugin** — processes Tailwind at build time
+- **Path alias `@`** — clean imports (`import X from '@/components/X'` instead of `../../X`)
+- **API proxy** — `/api/*` forwards to `https://localhost:7037`, avoids CORS entirely in dev
+
+### Step 4: Update index.css
+- `@import "tailwindcss"` — brings in all utility classes
+- `@custom-variant dark (&:where(.dark, .dark *))` — registers `dark:` prefix to work with `.dark` class on `<html>` (Tailwind v4 default is prefers-color-scheme, we need class-based)
+
+### Step 5: App.jsx — Landing Page + Dark Mode Toggle
+Replaced Vite default with TaskFlow landing:
+- Header with logo + dark/light toggle
+- Hero with gradient title
+- 3 feature cards (composition pattern — reusable `<FeatureCard />`)
+- Status banner
+- Footer
+
+**React concepts used:**
+- `useState` with lazy initializer (reads localStorage on mount)
+- `useEffect` with `[darkMode]` dependency (syncs DOM class when state changes)
+- Props destructuring: `function FeatureCard({ icon, title, description })`
+- Event handler: `onClick={() => setDarkMode(!darkMode)}`
+- Conditional rendering: `{darkMode ? '☀ Light' : '🌙 Dark'}`
+- Component reuse: `<FeatureCard />` called 3 times with different props
+
+### Step 6: Core Dependencies Installed
+```bash
+npm install react-router-dom axios @tanstack/react-query @microsoft/signalr clsx tailwind-merge lucide-react
+```
+
+| Package | Purpose | Used in Session |
+|---------|---------|-----------------|
+| react-router-dom | Routing, protected routes | 5 |
+| axios | HTTP client with JWT interceptors | 5 |
+| @tanstack/react-query | Server state management | 6 |
+| @microsoft/signalr | Real-time WebSocket client | 10 |
+| clsx | Conditional class names | All UI |
+| tailwind-merge | Dedupe conflicting Tailwind classes | All UI |
+| lucide-react | Icon library | All UI |
+
+### Step 7: Folder Structure Started
+```
+client/src/
+├── App.jsx              # Root component (landing page)
+├── main.jsx             # Entry point (createRoot)
+├── index.css            # Global styles + Tailwind
+├── lib/
+│   └── utils.js         # cn() helper for combining Tailwind classes
+└── services/
+    └── apiClient.js     # Axios with JWT interceptors
+```
+
+### Step 8: apiClient.js — Axios with JWT Auto-Attach
+Key pattern: two interceptors handle auth automatically.
+- **Request interceptor** — reads JWT from localStorage, adds `Authorization: Bearer <token>` header to every request
+- **Response interceptor** — on 401, clears localStorage and redirects to `/login`
+
+Result: components never need to manually attach tokens or handle auth expiry — it's all automatic.
+
+### Session 4 Result
+- ✅ React app runs at `http://localhost:5173`
+- ✅ Dark/light mode toggle working with localStorage persistence
+- ✅ Tailwind v4 configured (class-based dark mode)
+- ✅ Path alias `@` configured
+- ✅ API proxy to .NET backend (no CORS issues)
+- ✅ 7 core dependencies installed
+- ✅ Axios client with JWT auto-attach + auto-redirect on 401
+- ✅ Utils helper ready
+
+---
+
+## Session 5: (Next)
+**Planned:** Login/Register pages, React Router setup, AuthContext, Protected Routes
 
