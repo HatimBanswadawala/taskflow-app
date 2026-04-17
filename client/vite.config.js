@@ -16,7 +16,7 @@ export default defineConfig({
     // Forwards /api calls to the .NET backend — avoids CORS in dev
     proxy: {
       '/api': {
-        target: 'https://localhost:7037',
+        target: 'http://localhost:5170',
         changeOrigin: true,
         secure: false,
       },

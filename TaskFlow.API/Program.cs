@@ -137,7 +137,11 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowReactApp");
-app.UseHttpsRedirection();
+// Skip HTTPS redirect in Development so React proxy (HTTP) works
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseAuthentication(); // Must come before UseAuthorization
 app.UseAuthorization();
 
