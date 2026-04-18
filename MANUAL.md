@@ -775,6 +775,62 @@ Result: components never need to manually attach tokens or handle auth expiry �
 
 ---
 
-## Session 5: (Next)
-**Planned:** Login/Register pages, React Router setup, AuthContext, Protected Routes
+## Session 5: React Router + Auth Pages
+**Date:** April 15, 2026
+**Goal:** Build Login/Register pages with routing, AuthContext, Protected Routes
+
+### Files Created
+- `src/context/AuthContext.jsx` — createContext + AuthProvider + useAuth custom hook
+- `src/components/ProtectedRoute.jsx` — redirects to /login if not authed
+- `src/pages/Login.jsx` — login form with controlled inputs, calls AuthContext.login()
+- `src/pages/Register.jsx` — register form, 3 fields with password rules
+- `src/pages/Dashboard.jsx` — placeholder landing page after login
+- `src/App.jsx` — rewired with BrowserRouter + Routes + AuthProvider wrapping
+
+### React Concepts Used
+- Context API (createContext, useContext, Provider)
+- Custom hooks (useAuth)
+- React Router (BrowserRouter, Routes, Route, Link, Navigate, useNavigate)
+- Controlled inputs with single state object + computed property names
+- async/await with try/catch/finally in event handlers
+- Short-circuit and ternary conditional rendering
+
+### HTTPS Fix
+Changed Vite proxy target to `http://localhost:5170` (matches default .NET HTTP profile).
+Conditionally disabled `UseHttpsRedirection()` in Development so proxy works.
+
+---
+
+## Session 6: Dashboard + Boards List + TanStack Query
+**Date:** April 16, 2026
+**Goal:** Real boards data with TanStack Query, create/delete board UI, theme toggle
+
+### Files Created
+- `src/main.jsx` — added QueryClientProvider with default options (staleTime, retry)
+- `src/services/boardApi.js` — boardApi.getAll/getById/create/update/delete
+- `src/components/Button.jsx` — reusable button with variant/size props
+- `src/components/Modal.jsx` — dialog with backdrop, Esc key close, stopPropagation
+- `src/components/CreateBoardModal.jsx` — form modal with useMutation
+- `src/components/ThemeToggle.jsx` — Sun/Moon icon toggle with localStorage persistence
+- `src/pages/BoardDetail.jsx` — placeholder page for /boards/:id route
+- `src/pages/Dashboard.jsx` — rewrote to show boards grid with useQuery
+
+### TanStack Query Concepts
+- `useQuery({ queryKey, queryFn })` — for GET requests
+- `useMutation({ mutationFn, onSuccess, onError })` — for POST/PUT/DELETE
+- `queryClient.invalidateQueries({ queryKey })` — triggers refetch after mutation
+- `isPending` — loading state during mutation
+- staleTime — how long cached data is "fresh"
+
+### UI States Handled
+- Loading (spinner with "Loading boards...")
+- Error (red alert with error message)
+- Empty (dashed border card with "Create Board" CTA)
+- Data (responsive grid: 1 col mobile, 2 col tablet, 3 col desktop)
+- Hover (delete icon appears on card hover using `group-hover`)
+
+---
+
+## Session 7: (Next)
+**Planned:** Board detail page — columns + tasks display, create/edit task modals
 
