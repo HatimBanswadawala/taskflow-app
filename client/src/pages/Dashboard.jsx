@@ -7,6 +7,7 @@ import { boardApi } from '@/services/boardApi'
 import Button from '@/components/Button'
 import CreateBoardModal from '@/components/CreateBoardModal'
 import ThemeToggle from '@/components/ThemeToggle'
+import DashboardStats from '@/components/DashboardStats'
 
 export default function Dashboard() {
   const { user, logout } = useAuth()
@@ -44,9 +45,9 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-sky-100/50 to-cyan-50 dark:from-slate-950 dark:via-slate-950 dark:to-slate-950 text-slate-900 dark:text-slate-50">
       {/* Header */}
-      <header className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-0 z-10">
+      <header className="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 sticky top-0 z-10 backdrop-blur-md shadow-sm">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <Link to="/dashboard" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold text-sm">
@@ -69,6 +70,9 @@ export default function Dashboard() {
 
       {/* Content */}
       <main className="max-w-6xl mx-auto px-4 py-8">
+        {/* Stats row — only show when boards have loaded */}
+        {boards && boards.length > 0 && <DashboardStats boards={boards} />}
+
         {/* Title + Create button */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -122,7 +126,7 @@ export default function Dashboard() {
               <Link
                 key={board.id}
                 to={`/boards/${board.id}`}
-                className="group relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 hover:shadow-lg hover:border-cyan-500 dark:hover:border-cyan-500 transition-all"
+                className="group relative bg-white dark:bg-slate-800 border border-white dark:border-slate-700 rounded-xl p-5 shadow-lg shadow-blue-200/40 dark:shadow-slate-900/40 hover:shadow-xl hover:shadow-cyan-300/50 dark:hover:shadow-cyan-500/30 hover:-translate-y-1 hover:border-cyan-400 dark:hover:border-cyan-500 transition-all"
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">

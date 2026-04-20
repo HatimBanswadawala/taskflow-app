@@ -29,7 +29,7 @@ export default function Modal({ isOpen, onClose, title, children }) {
       {/* Modal content — stopPropagation prevents backdrop click bubbling up */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-200 dark:border-slate-800"
+        className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-200 dark:border-slate-700 ring-1 ring-slate-900/5"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">{title}</h2>

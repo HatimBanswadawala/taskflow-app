@@ -831,6 +831,117 @@ Conditionally disabled `UseHttpsRedirection()` in Development so proxy works.
 
 ---
 
-## Session 7: (Next)
-**Planned:** Board detail page — columns + tasks display, create/edit task modals
+## Session 7: Board Detail View — Columns + Tasks
+**Date:** April 17, 2026
+**Goal:** Build the actual Kanban view with task CRUD
+
+### Files Created
+- `src/services/taskApi.js` — taskApi.create/update/delete/move
+- `src/lib/taskHelpers.js` — PRIORITY enum, PRIORITY_TO_VALUE map, PRIORITY_STYLES, formatDueDate, isOverdue
+- `src/components/TaskCard.jsx` — single task display with priority badge, due date, hover actions
+- `src/components/Column.jsx` — column with task list + Add Task button
+- `src/components/TaskModal.jsx` — combined Create/Edit modal (task=null → create, task={...} → edit)
+- `src/pages/BoardDetail.jsx` — rewritten with full board layout
+
+### Patterns Used
+- **Lifting state up** — modal state in BoardDetail (parent), passed callbacks to children
+- **Same modal, two modes** — `task` prop being null vs object switches Create/Edit
+- **Pass-through callbacks** — `onAddTask/onEditTask/onDeleteTask` flow Parent → Column → TaskCard
+- **TanStack Query invalidation** — every mutation invalidates `['board', id]` to refetch board with all changes
+- **Conditional UI states** — Loading, Error, Data with proper guards
+- **Horizontal scroll** — `overflow-x-auto` for many columns, `flex-shrink-0` keeps columns from squishing
+
+### Backend Integration
+- GET /api/boards/:id — fetches board with all nested columns + tasks
+- POST /api/tasks — create task in column
+- PUT /api/tasks/:id — update task
+- DELETE /api/tasks/:id — delete task
+- (PUT /api/tasks/:id/move — wired but used in Session 9 for drag-drop)
+
+### Result
+- Click board card → opens board view
+- 3 default columns visible (To Do, In Progress, Done)
+- Seeded tasks display with priority badges
+- Add task per column with title/description/priority/due date
+- Edit task with same modal (prefilled values)
+- Delete task with confirm dialog
+- All updates auto-refresh via TanStack Query invalidation
+
+---
+
+## Session 8: Dashboard Stats + Debounced Search + UI Polish
+**Date:** April 18-19, 2026
+**Goal:** Polish UX — stats on dashboard, task search with debounce, animations, visual refinement
+
+### Files Created
+- `src/components/DashboardStats.jsx` — 4 metric cards (Boards, Total Tasks, Completed, Overdue)
+- `src/hooks/useDebounce.js` — custom hook delaying value updates after inactivity
+- `src/components/ThemeToggle.jsx` — Sun/Moon icon toggle (added earlier, used here too)
+
+### Files Updated
+- `src/pages/Dashboard.jsx` — mounted DashboardStats above boards grid
+- `src/pages/BoardDetail.jsx` — added search bar with useDebounce + useMemo filtering
+- `src/index.css` — added `@keyframes shake`, `@keyframes fadeIn` + `.animate-shake`, `.animate-fade-in` utility classes
+- `src/pages/Login.jsx` + `Register.jsx` — shake animation on error messages, added `text-slate-900 dark:text-slate-50` for dark mode visibility fix
+- `src/pages/BoardDetail.jsx` + `Dashboard.jsx` — added sticky headers, backdrop blur, shadows
+- `src/components/TaskCard.jsx`, `Column.jsx`, `CreateBoardModal.jsx`, `TaskModal.jsx` — contrast improvements for dark mode
+
+### React Concepts Used
+- **Custom hook** (useDebounce) starting with `use` prefix — rule of hooks
+- **useMemo** — cache expensive filter computation, only recompute when deps change
+- **flatMap** — flatten nested arrays (`boards → columns → tasks`)
+- **Timer + cleanup in useEffect** — classic debounce pattern
+- **useEffect cleanup function** — cancel previous timer when value changes rapidly
+
+### useDebounce Pattern
+```js
+export function useDebounce(value, delayMs = 300) {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(timer)  // cleanup cancels previous timer
+  }, [value, delayMs])
+  return debounced
+}
+```
+
+### UI/UX Improvements (Evolution)
+1. **First pass** — Plain gradient backgrounds (too washed out per user feedback)
+2. **Second pass** — Blue+cyan gradient backgrounds (`from-blue-50 via-sky-100/50 to-cyan-50`)
+3. **Third pass** — Added colored shadows (`shadow-blue-200/40`), hover lift (`hover:-translate-y-1`)
+4. **Experimented with purple dark mode** — User reverted: felt off-brand
+5. **Final** — Consistent cyan/blue accent in both light and dark modes
+
+### Card Elevation Strategy
+- **Light mode:** white cards + `shadow-lg shadow-blue-200/40` on colored background
+- **Dark mode:** `bg-slate-800` cards (lighter than `bg-slate-950` page) for depth
+- Hover: `hover:shadow-xl hover:-translate-y-1` for lift effect
+
+### Animation Patterns
+```css
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+.animate-shake { animation: shake 0.3s ease-in-out; }
+```
+- Applied to error divs in Login/Register for immediate visual feedback on validation failure
+- Triggers every time a new error string mounts (key-based re-render would repeat)
+
+### Session 8 Result
+- ✅ Dashboard stats: 4 metric cards with icons (LayoutGrid, Clock, CheckCircle, AlertTriangle)
+- ✅ Task search: type to filter, 300ms debounce, match count text, X button to clear
+- ✅ useDebounce hook ready for reuse (future use: search, filter, auto-save)
+- ✅ Shake animation on login/register errors
+- ✅ Light mode: blue/cyan gradient backgrounds with white cards popping
+- ✅ Dark mode: clean slate-based with proper contrast layers
+- ✅ Sticky headers with frosted glass (`backdrop-blur-md`)
+- ✅ Form inputs: inset look (`bg-slate-50` → focus:`bg-white`)
+- ✅ Cards hover with colored shadow and subtle lift
+
+---
+
+## Session 9: (Next)
+**Planned:** Drag-and-drop tasks between columns using @dnd-kit — the marquee feature for the portfolio demo
 

@@ -15,9 +15,9 @@ export default function Button({
 
   const variants = {
     primary: 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:opacity-90',
-    secondary: 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700',
+    secondary: 'bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600',
     danger: 'bg-red-500 text-white hover:bg-red-600',
-    ghost: 'hover:bg-slate-100 dark:hover:bg-slate-800',
+    ghost: 'hover:bg-slate-100 dark:hover:bg-slate-700',
   }
 
   const sizes = {
