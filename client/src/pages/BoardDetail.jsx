@@ -2,12 +2,21 @@ import { useState, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Loader2, AlertCircle, Search, X } from 'lucide-react'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+} from '@dnd-kit/core'
 import { boardApi } from '@/services/boardApi'
 import { taskApi } from '@/services/taskApi'
 import { useDebounce } from '@/hooks/useDebounce'
 import Button from '@/components/Button'
 import ThemeToggle from '@/components/ThemeToggle'
 import Column from '@/components/Column'
+import TaskCard from '@/components/TaskCard'
 import TaskModal from '@/components/TaskModal'
 
 export default function BoardDetail() {
@@ -25,6 +34,14 @@ export default function BoardDetail() {
     columnId: null,  // for create
     task: null,      // for edit (null = create mode)
   })
+
+  // Drag state — track which task is being dragged for the DragOverlay
+  const [activeTask, setActiveTask] = useState(null)
+
+  // Sensors — require pointer to move 5px before drag starts (prevents accidental drag on click)
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
 
   // Fetch board with all its columns and tasks
   const { data: board, isLoading, error } = useQuery({
@@ -61,6 +78,72 @@ export default function BoardDetail() {
       queryClient.invalidateQueries({ queryKey: ['board', id] })
     },
   })
+
+  // Move task mutation (drag-drop backend)
+  const moveTask = useMutation({
+    mutationFn: ({ taskId, targetColumnId, newPosition }) =>
+      taskApi.move(taskId, { taskId, targetColumnId, newPosition }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['board', id] })
+    },
+  })
+
+  // Helper — find a task by ID across all columns
+  const findTaskById = (taskId) => {
+    for (const col of board?.columns ?? []) {
+      const task = col.tasks?.find((t) => t.id === taskId)
+      if (task) return { task, columnId: col.id }
+    }
+    return null
+  }
+
+  // Drag START — user picked up a card
+  const handleDragStart = (event) => {
+    const found = findTaskById(event.active.id)
+    if (found) setActiveTask(found.task)
+  }
+
+  // Drag END — user dropped the card
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    setActiveTask(null)
+    if (!over) return  // dropped outside a valid zone
+
+    const activeId = active.id  // task being dragged
+    const overId = over.id       // what it was dropped on (task OR column)
+
+    // Find source column
+    const source = findTaskById(activeId)
+    if (!source) return
+
+    // Determine target column
+    // If dropped ON another task → target column = that task's column
+    // If dropped ON a column directly → target column = that column
+    let targetColumnId
+    let newPosition
+
+    const droppedOnTask = findTaskById(overId)
+    if (droppedOnTask) {
+      targetColumnId = droppedOnTask.columnId
+      // Position = position of the task we dropped on
+      const targetColumn = board.columns.find((c) => c.id === targetColumnId)
+      newPosition = targetColumn.tasks.findIndex((t) => t.id === overId)
+    } else {
+      // Dropped on a column directly (usually empty column)
+      targetColumnId = overId
+      const targetColumn = board.columns.find((c) => c.id === targetColumnId)
+      newPosition = targetColumn?.tasks?.length ?? 0  // add to bottom
+    }
+
+    // Skip if dropped in same spot
+    if (source.columnId === targetColumnId) {
+      const sourceColumn = board.columns.find((c) => c.id === source.columnId)
+      const sourcePosition = sourceColumn.tasks.findIndex((t) => t.id === activeId)
+      if (sourcePosition === newPosition) return
+    }
+
+    moveTask.mutate({ taskId: activeId, targetColumnId, newPosition })
+  }
 
   // Handlers passed down to Column → TaskCard
   const handleAddTask = (columnId) => {
@@ -156,22 +239,36 @@ export default function BoardDetail() {
         )}
       </div>
 
-      {/* Board content — horizontal scroll if too many columns */}
-      <main className="flex-1 overflow-x-auto">
-        <div className="px-4 py-6">
-          <div className="flex gap-4 min-h-full">
-            {filteredColumns.map((column) => (
-              <Column
-                key={column.id}
-                column={column}
-                onAddTask={handleAddTask}
-                onEditTask={handleEditTask}
-                onDeleteTask={handleDeleteTask}
-              />
-            ))}
+      {/* Board content wrapped in DndContext for drag-and-drop */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <main className="flex-1 overflow-x-auto">
+          <div className="px-4 py-6">
+            <div className="flex gap-4 min-h-full">
+              {filteredColumns.map((column) => (
+                <Column
+                  key={column.id}
+                  column={column}
+                  onAddTask={handleAddTask}
+                  onEditTask={handleEditTask}
+                  onDeleteTask={handleDeleteTask}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      </main>
+        </main>
+
+        {/* DragOverlay — shows floating card at cursor while dragging */}
+        <DragOverlay>
+          {activeTask ? (
+            <TaskCard task={activeTask} onEdit={() => {}} onDelete={() => {}} />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       {/* Task modal — handles both create and edit */}
       <TaskModal

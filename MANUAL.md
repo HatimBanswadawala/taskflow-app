@@ -942,6 +942,111 @@ export function useDebounce(value, delayMs = 300) {
 
 ---
 
-## Session 9: (Next)
-**Planned:** Drag-and-drop tasks between columns using @dnd-kit — the marquee feature for the portfolio demo
+## Session 9: Drag-and-Drop Tasks (@dnd-kit)
+**Date:** April 19, 2026
+**Goal:** Implement task drag-and-drop between columns — the marquee visual feature
+
+### Packages Installed
+```bash
+npm install @dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities
+```
+
+- `@dnd-kit/core` — base primitives (DndContext, useDroppable, sensors)
+- `@dnd-kit/sortable` — sortable lists (useSortable, SortableContext)
+- `@dnd-kit/utilities` — CSS transform helpers
+
+### Files Updated
+- `src/components/TaskCard.jsx` — made draggable with `useSortable`
+- `src/components/Column.jsx` — made drop target with `useDroppable` + `SortableContext`
+- `src/pages/BoardDetail.jsx` — wrapped in `<DndContext>` with handlers + `<DragOverlay>` for floating card preview
+
+### React / dnd-kit Concepts
+
+**useSortable (TaskCard):**
+- Returns `{ attributes, listeners, setNodeRef, transform, transition, isDragging }`
+- `attributes` — ARIA attributes for accessibility
+- `listeners` — pointer event handlers (onPointerDown etc)
+- `setNodeRef` — ref for the draggable element
+- `transform` — `{x, y}` while being dragged
+- `isDragging` — boolean for visual feedback
+
+**useDroppable (Column):**
+- Returns `{ setNodeRef, isOver }`
+- `isOver` true when a draggable hovers over this column
+- Use for highlight styling during drag
+
+**SortableContext:**
+- Wraps children that can reorder within the column
+- `items` = array of IDs
+- `strategy={verticalListSortingStrategy}` — for vertical lists
+
+**DndContext:**
+- Root wrapper for all drag-and-drop
+- `sensors` — configure activation (we use 5px threshold to prevent accidental drags)
+- `collisionDetection={closestCorners}` — algorithm that works well for Kanban
+- `onDragStart` — fires when drag begins
+- `onDragEnd` — fires when dropped (source + target info)
+
+**DragOverlay:**
+- Shows a floating copy of the card at cursor position
+- Original card stays in place with opacity 0.4
+- Provides smooth visual feedback
+
+### Design Evolution
+
+**First iteration** — only grip icon (⋮⋮) is draggable:
+- Listeners on grip button only
+- Pro: edit/delete buttons clickable without `stopPropagation`
+- Con: less intuitive (users tried to drag the whole card)
+
+**Second iteration (final)** — entire card is draggable:
+- `{...attributes} {...listeners}` spread on card root div
+- Added `cursor-grab active:cursor-grabbing` for visual cue
+- **Critical fix:** `onPointerDown={(e) => e.stopPropagation()}` on edit/delete buttons
+  - Without this, the 5px sensor activates the drag before onClick fires
+  - Must stop at pointerdown, not just click
+
+### Drag-Drop Flow
+
+```
+1. User presses card → sensor waits for 5px movement
+2. DndContext fires onDragStart → setActiveTask(task)
+3. Original card opacity → 0.4, ring cyan shown
+4. DragOverlay renders floating card copy at cursor
+5. User drags over columns → isOver highlights drop targets
+6. User drops → onDragEnd fires with { active, over }
+7. Determine target:
+   - Dropped on task? → target = that task's column, position = that task's index
+   - Dropped on empty column? → target = that column, position = length (bottom)
+8. Skip if same position (no-op)
+9. moveTask.mutate({ taskId, targetColumnId, newPosition })
+10. Backend .NET API: MoveTaskCommand handler reorders source + target columns,
+    updates task's ColumnId + Position, auto-updates status based on target column name
+11. TanStack Query invalidates ['board', id] → refetch → UI reflects new state
+```
+
+### Sensor Configuration
+
+```js
+const sensors = useSensors(
+  useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+)
+```
+5px distance threshold prevents drag from starting on a simple click — users can click buttons inside the draggable card without triggering a drag.
+
+### Session 9 Result
+- ✅ Task cards draggable by entire surface
+- ✅ Drop zones highlight in cyan when dragging over
+- ✅ Floating card overlay at cursor during drag
+- ✅ Reorder within column works
+- ✅ Move across columns works
+- ✅ Drop on empty column works (instruction "Drop tasks here" shown)
+- ✅ Edit/Delete buttons still clickable (stopPropagation on pointerDown)
+- ✅ Backend auto-updates task status based on target column name
+- ✅ Task position persists correctly across refetches
+
+---
+
+## Session 10: (Next)
+**Planned:** SignalR real-time — live updates across browsers when tasks move
 
