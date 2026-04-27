@@ -1345,16 +1345,142 @@ Not run locally — corporate laptop restricts admin installs. Render will pull 
 
 ---
 
-## Session 13 — GitHub Actions CI/CD Scope (planned)
-- Create `.github/workflows/ci-cd.yml`
-- Workflow steps:
-  1. Checkout code on push to `main`
-  2. Setup .NET 9
-  3. Restore + build solution
-  4. Run unit tests (from Session 11)
-  5. If pass → build Docker image
-  6. Push to GitHub Container Registry (GHCR)
-  7. Trigger Vercel webhook (React deploy)
-  8. Trigger Render deploy hook (API deploy)
-- Uses GitHub Secrets for: `RENDER_DEPLOY_HOOK`, `VERCEL_DEPLOY_HOOK`, JWT signing key
+## Session 13: GitHub Actions CI Workflow
+**Date:** April 27, 2026
+**Goal:** Automated build + test + Docker validation on every push to main
+
+### File created
+`.github/workflows/ci.yml` — single workflow with 2 jobs.
+
+### Triggers
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:    # manual run button in GitHub UI
+```
+
+### Job 1 — build-and-test
+1. Checkout code (`actions/checkout@v4`)
+2. Setup .NET 9 (`actions/setup-dotnet@v4`)
+3. **Cache NuGet packages** keyed on `hashFiles('**/*.csproj')` — invalidates only when package list changes
+4. `dotnet restore` → `dotnet build --no-restore` → `dotnet test --no-build`
+
+### Job 2 — docker-build
+- `needs: build-and-test` — runs only if tests pass (saves CI minutes when tests break)
+- Uses `docker/setup-buildx-action@v3` + `docker/build-push-action@v6`
+- `push: false` — only validates the build (Render builds its own image at deploy time)
+- GitHub Actions cache for Docker layers via `cache-from/cache-to: type=gha`
+
+### Key concepts (interview gold)
+- **`actions/checkout@v4`** — always Step 1; runners need code
+- **`actions/cache@v4`** — keyed cache; cuts NuGet restore from ~60s → ~5s on cache hit
+- **`needs:` keyword** — wires job dependencies
+- **`workflow_dispatch`** — manual trigger button; useful for re-running without code push
+- **GHA cache (`type=gha`)** — Docker layer caching across runs; first build slow, subsequent builds fast
+
+### Why public repo = unlimited free CI minutes
+Pushing `ci.yml` to `.github/workflows/` activates the workflow instantly. Public repo means unlimited Linux runner minutes — perfect for portfolio.
+
+### Resume bullet
+*"GitHub Actions CI pipeline — runs build + 13 unit tests on every push, validates Docker image build, with NuGet hash-keyed caching and Docker layer caching for sub-2-minute pipeline runtime."*
+
+---
+
+## Session 14: Production Deployment — Render (API) + Vercel (Frontend)
+**Date:** April 27, 2026
+**Goal:** Ship TaskFlow to production with public URLs
+
+### Architecture
+```
+User Browser
+    ↓
+Vercel (React 18, global CDN)         https://taskflow-by-hatim.vercel.app
+    ↓ HTTPS
+Render (.NET 9 API, Docker container) https://taskflow-api-efww.onrender.com
+```
+
+### Render setup (backend)
+1. New Web Service connected to GitHub repo (`HatimBanswadawala/TaskFlow`)
+2. Region: **Singapore** (closest to India for testing)
+3. Runtime: **Docker** (uses our `TaskFlow.API/Dockerfile`)
+4. Branch: `main` — auto-deploys on push
+5. Instance: **Free tier** (sleeps after 15 min idle, ~30s cold start)
+6. **Environment variables** added on Render dashboard:
+   - `Jwt__Key` — fresh 64-char base64 key from `openssl rand -base64 48` (NOT same as appsettings.json)
+   - `Jwt__Issuer = TaskFlow.API`
+   - `Jwt__Audience = TaskFlow.Client`
+   - `ASPNETCORE_ENVIRONMENT = Production`
+   - `AllowedOrigins = http://localhost:5173,https://taskflow-by-hatim.vercel.app`
+
+### Vercel setup (frontend)
+1. New Project from same GitHub repo
+2. **Root Directory: `client`** (critical — package.json lives there, NOT repo root)
+3. Framework: Vite (auto-detected)
+4. **Environment variable:** `VITE_API_URL = https://taskflow-api-efww.onrender.com/api`
+5. Project name: `taskflow-by-hatim` → URL `taskflow-by-hatim.vercel.app`
+
+### Code changes for production-readiness
+
+**1. apiClient.js — environment-aware base URL**
+```javascript
+// Before (dev-only):
+baseURL: '/api'
+
+// After:
+baseURL: import.meta.env.VITE_API_URL || '/api'
+```
+- Production: uses Render URL injected at build time
+- Local dev: falls back to `/api` (Vite proxy still works)
+
+**2. Program.cs — config-driven CORS**
+```csharp
+// Before (hardcoded):
+policy.WithOrigins("http://localhost:5173")
+
+// After (env var-driven):
+var allowedOrigins = builder.Configuration["AllowedOrigins"]
+    ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    ?? new[] { "http://localhost:5173" };
+policy.WithOrigins(allowedOrigins)
+```
+- Production: reads comma-separated origins from `AllowedOrigins` env var on Render
+- Local dev: defaults to `localhost:5173`
+
+### Critical learnings (interview gold)
+
+**1. .NET env var convention**
+`Jwt:Key` in JSON ↔ `Jwt__Key` in env vars. Linux env vars can't contain `:`, so .NET maps `__` to `:` automatically.
+
+**2. Vite env vars are baked at build time**
+Changing `VITE_API_URL` on Vercel after deploy does NOTHING — the OLD value is in the JS bundle. **Manual redeploy required** after env var changes. Vite inlines `import.meta.env.X` at build, not runtime.
+
+**3. The `/api` suffix gotcha**
+`apiClient.post('/auth/login')` → baseURL + path. We needed `VITE_API_URL` to include `/api` so production URL becomes `...onrender.com/api/auth/login`. First attempt without `/api` produced 404 errors.
+
+**4. CORS is browser-enforced, not API-enforced**
+The API actually responds successfully — the browser blocks JS from reading the response if `Access-Control-Allow-Origin` doesn't match the calling domain. CORS errors show status 200 in DevTools but the JS Promise rejects.
+
+**5. JWT key must be 32+ chars for HMAC-SHA256**
+`openssl rand -base64 48` → 64 chars, plenty of entropy. Production key MUST be different from any committed appsettings.json key (treat that as leaked).
+
+**6. Free-tier Render sleep**
+15 min idle = service sleeps. First request after sleep: 30-60s cold start. Mitigation: free uptime monitor (UptimeRobot.com) pinging `/` every 5 min keeps it warm.
+
+### Demo credentials (seeded in InMemory DB)
+```
+Email:    demo@taskflow.app
+Password: Demo123!
+```
+⚠️ InMemory DB resets on every Render restart — registered users are lost. Demo user is reseeded on each startup via `SeedData.Initialize`.
+
+### Resume bullets
+*"Deployed full-stack TaskFlow to production — .NET 9 API on Render via Docker (config-driven CORS, env-managed JWT signing key, Serilog structured logging), React 18 frontend on Vercel with Vite (env-aware API base URL via VITE_API_URL)."*
+
+*"Live demo: [taskflow-by-hatim.vercel.app](https://taskflow-by-hatim.vercel.app) · Source: [github.com/HatimBanswadawala/TaskFlow](https://github.com/HatimBanswadawala/TaskFlow)"*
+
+### Next session
+**Session 15 — README polish + GitHub repo presentation** — screenshots, badges, live demo links, quick-start, architecture diagram.
 
