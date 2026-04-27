@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Serilog;
 using TaskFlow.Application.Behaviors;
 using TaskFlow.Application.Features.Auth.Commands.Login;
 using TaskFlow.Application.Features.Auth.Commands.Register;
@@ -22,6 +23,27 @@ using TaskFlow.Infrastructure.Repositories;
 using TaskFlow.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ──────────────────────────────────────────────
+// 0. Serilog — Structured Logging
+// ──────────────────────────────────────────────
+// Replaces default Microsoft logger. Outputs to:
+//   - Console (developer tail-friendly)
+//   - logs/taskflow-YYYYMMDD.log (rolling daily file)
+builder.Host.UseSerilog((context, configuration) => configuration
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithThreadId()
+    .WriteTo.Console(outputTemplate:
+        "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.File(
+        path: "logs/taskflow-.log",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7,
+        outputTemplate:
+            "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"));
 
 // ──────────────────────────────────────────────
 // 1. Register Services (Dependency Injection)
@@ -135,6 +157,9 @@ if (app.Environment.IsDevelopment())
         options.SwaggerEndpoint("/openapi/v1.json", "TaskFlow API v1");
     });
 }
+
+// Auto-log every HTTP request: method, path, status code, duration
+app.UseSerilogRequestLogging();
 
 app.UseCors("AllowReactApp");
 // Skip HTTPS redirect in Development so React proxy (HTTP) works

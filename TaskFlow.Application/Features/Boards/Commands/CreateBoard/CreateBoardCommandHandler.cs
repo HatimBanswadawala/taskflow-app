@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.Extensions.Logging;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Domain.Interfaces;
 
@@ -11,14 +12,22 @@ namespace TaskFlow.Application.Features.Boards.Commands.CreateBoard;
 public class CreateBoardCommandHandler : IRequestHandler<CreateBoardCommand, Guid>
 {
     private readonly IRepository<Board> _boardRepository;
+    private readonly ILogger<CreateBoardCommandHandler> _logger;
 
-    public CreateBoardCommandHandler(IRepository<Board> boardRepository)
+    public CreateBoardCommandHandler(
+        IRepository<Board> boardRepository,
+        ILogger<CreateBoardCommandHandler> logger)
     {
         _boardRepository = boardRepository;
+        _logger = logger;
     }
 
     public async Task<Guid> Handle(CreateBoardCommand request, CancellationToken cancellationToken)
     {
+        _logger.LogInformation(
+            "Creating board {BoardName} for user {UserId}",
+            request.Name, request.UserId);
+
         var board = new Board
         {
             Name = request.Name,
@@ -35,6 +44,11 @@ public class CreateBoardCommandHandler : IRequestHandler<CreateBoardCommand, Gui
         };
 
         var created = await _boardRepository.AddAsync(board);
+
+        _logger.LogInformation(
+            "Created board {BoardId} ({BoardName}) with {ColumnCount} default columns",
+            created.Id, created.Name, created.Columns.Count);
+
         return created.Id;
     }
 }

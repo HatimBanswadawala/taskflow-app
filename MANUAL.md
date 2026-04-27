@@ -1088,10 +1088,200 @@ const { data: board } = useQuery({
 
 ---
 
-## Session 11: (Next)
-**Planned:** Unit tests with xUnit + Moq, Serilog structured logging
+## Session 11: Unit Tests (xUnit + Moq + FluentAssertions) + Serilog Structured Logging
+**Date:** April 27, 2026
+**Goal:** Add senior-grade testing + structured logging — both visible signals recruiters check on portfolio repos
 
-### Session 13 — GitHub Actions CI/CD Scope
+### Part A — Unit Tests (13 tests across Auth, Boards, Tasks)
+
+#### Packages installed
+```xml
+<PackageReference Include="Moq" Version="4.20.72" />
+<PackageReference Include="FluentAssertions" Version="6.12.2" />
+<PackageReference Include="FluentValidation" Version="11.12.0" />
+<PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.0" />
+```
+Also added `TaskFlow.Infrastructure` project reference (needed for `AppDbContext` in handler tests).
+
+#### Folder structure (mirrors Application/Features)
+```
+TaskFlow.Tests/
+└── Features/
+    ├── Auth/Commands/
+    │   ├── LoginCommandHandlerTests.cs
+    │   └── RegisterCommandHandlerTests.cs
+    ├── Boards/Commands/
+    │   ├── CreateBoardCommandHandlerTests.cs
+    │   └── CreateBoardCommandValidatorTests.cs
+    └── Tasks/Commands/
+        └── MoveTaskCommandHandlerTests.cs
+```
+
+#### The 13 tests
+| # | Test Class | Test | What it proves |
+|---|------------|------|----------------|
+| 1 | CreateBoardCommandHandler | ShouldCreateBoardWith3DefaultColumns | Handler creates 3 columns (To Do, In Progress, Done) in correct order |
+| 2-4 | CreateBoardCommandValidator | ShouldFail_WhenNameIsEmptyOrNull (`""`, null) | Empty/null name rejected |
+| 5 | CreateBoardCommandValidator | ShouldFail_WhenNameExceeds100Characters | Max-length enforced |
+| 6 | CreateBoardCommandValidator | ShouldPass_WhenAllFieldsValid | Happy path |
+| 7 | RegisterCommandHandler | ShouldHashPassword_BeforeStoringUser | Security: plaintext NEVER stored |
+| 8 | RegisterCommandHandler | ShouldThrow_WhenEmailAlreadyExists | Duplicate email rejected; hasher NEVER called |
+| 9 | LoginCommandHandler | ShouldReturnToken_WhenCredentialsValid | Auth happy path |
+| 10 | LoginCommandHandler | ShouldThrow_WhenPasswordIsWrong | Generic error message (security: prevents email enumeration) |
+| 11 | LoginCommandHandler | ShouldThrow_WhenEmailNotFound | Same generic error message; JWT NEVER generated |
+| 12 | MoveTaskCommandHandler | ShouldUpdateColumnAndStatus_WhenMovingTaskToDoneColumn | Drag-drop persistence + auto-status |
+| 13 | MoveTaskCommandHandler | ShouldReturnFalse_WhenTaskDoesNotExist | Graceful failure |
+| 14 | MoveTaskCommandHandler | ShouldReturnFalse_WhenTargetColumnDoesNotExist | Graceful failure + state unchanged |
+
+(13 distinct test methods; xUnit reports 13 results because `[Theory]` with `[InlineData]` runs as 2 — net total = 13.)
+
+#### Key patterns demonstrated
+
+**1. Mocking with Moq**
+```csharp
+var mockRepo = new Mock<IRepository<Board>>();
+mockRepo.Setup(r => r.AddAsync(It.IsAny<Board>()))
+        .Callback<Board>(b => capturedBoard = b)
+        .ReturnsAsync((Board b) => b);
+mockRepo.Verify(r => r.AddAsync(It.IsAny<Board>()), Times.Once);
+```
+
+**2. FluentAssertions for readable asserts**
+```csharp
+result.Should().NotBeNull();
+columns.Should().HaveCount(3);
+columns.Select(c => c.Name).Should().ContainInOrder("To Do", "In Progress", "Done");
+```
+
+**3. EF Core InMemory for handlers using DbContext**
+```csharp
+var options = new DbContextOptionsBuilder<AppDbContext>()
+    .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())  // unique per test
+    .Options;
+return new AppDbContext(options);
+```
+Used unique GUID DB names → no test pollution between runs.
+
+**4. Theory + InlineData for parameterized tests**
+```csharp
+[Theory]
+[InlineData("")]
+[InlineData(null)]
+public void Validate_ShouldFail_WhenNameIsEmptyOrNull(string? badName)
+```
+
+**5. Async exception testing**
+```csharp
+Func<Task> act = async () => await handler.Handle(command, CancellationToken.None);
+await act.Should().ThrowAsync<UnauthorizedAccessException>()
+         .WithMessage("Invalid email or password");
+```
+
+**6. Negative verification**
+```csharp
+mockHasher.Verify(h => h.Hash(It.IsAny<string>()), Times.Never);  // proves early-exit
+```
+
+#### Security insight (interview gold)
+Login handler uses **same generic error** for both wrong-password and unknown-email scenarios. This prevents email-enumeration attacks (OWASP A07:2021). Test #10 and #11 explicitly assert the identical message.
+
+#### Why FakeItEasy at RMC, Moq here
+RMC's API_ConvenienceCheck uses FakeItEasy. For TaskFlow portfolio I picked Moq since it's the most recognized in interview questions. Both are conceptually identical — Moq uses `mock.Setup(...).Returns(...)`, FakeItEasy uses `A.CallTo(() => fake.X()).Returns(...)`. Knowing both is a plus.
+
+---
+
+### Part B — Serilog Structured Logging
+
+#### Packages installed (in TaskFlow.API)
+```xml
+<PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+<PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+<PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+```
+`Serilog.AspNetCore` is a meta-package that includes Serilog core + Console sink + File sink. Enrichers are separate packages.
+
+#### Configuration in Program.cs
+```csharp
+builder.Host.UseSerilog((context, configuration) => configuration
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithThreadId()
+    .WriteTo.Console(outputTemplate:
+        "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.File(
+        path: "logs/taskflow-.log",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7,
+        outputTemplate: "..."));
+```
+
+Plus middleware:
+```csharp
+app.UseSerilogRequestLogging();   // auto-logs every HTTP request
+```
+
+#### Settings explained
+| Setting | What it does |
+|---|---|
+| `MinimumLevel.Information()` | Skip Verbose/Debug — only log Info, Warning, Error, Fatal |
+| `Override("Microsoft.AspNetCore", Warning)` | Quiet the noisy ASP.NET internals |
+| `Enrich.FromLogContext()` | Pick up scoped properties (e.g., user IDs added in middleware) |
+| `Enrich.WithMachineName()` | Add server name to every log (distributed-system debugging) |
+| `Enrich.WithThreadId()` | Add thread ID — helps diagnose concurrency issues |
+| `WriteTo.Console(...)` | Sink for `dotnet run` development tail |
+| `WriteTo.File(rollingInterval: Day, retainedFileCountLimit: 7)` | Rolling file — `taskflow-20260427.log`, keeps last 7 days |
+| `UseSerilogRequestLogging()` | One-liner replacing noisy ASP.NET request logs with single-line summaries |
+
+#### Structured logging in handlers
+```csharp
+public class CreateBoardCommandHandler : IRequestHandler<CreateBoardCommand, Guid>
+{
+    private readonly ILogger<CreateBoardCommandHandler> _logger;
+    // ... constructor injects ILogger<T>
+
+    public async Task<Guid> Handle(CreateBoardCommand request, CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "Creating board {BoardName} for user {UserId}",
+            request.Name, request.UserId);
+        // ...
+    }
+}
+```
+
+**Critical rule:** `{Placeholder}` syntax — NEVER string interpolation `$"..."`. String interpolation collapses everything into a single string, breaking structured capture.
+
+**Why `ILogger<T>` not `ILogger`:** The generic type becomes the source context, so logs show which class logged what. Easier filtering.
+
+#### Test compatibility — NullLogger<T>
+The `CreateBoardCommandHandler` constructor changed (added `ILogger<T>` param), breaking the existing test. Fix:
+```csharp
+var handler = new CreateBoardCommandHandler(
+    mockRepo.Object,
+    NullLogger<CreateBoardCommandHandler>.Instance);  // built-in no-op logger
+```
+`NullLogger<T>.Instance` is a singleton no-op — zero allocation, doesn't pollute test output.
+
+#### .gitignore update
+Added `logs/` and `*.log` to prevent log files from being committed.
+
+---
+
+### Resume bullets unlocked after Session 11
+- *"13 unit tests with xUnit, Moq, and FluentAssertions covering critical command handlers (Auth, Boards, Tasks) — including security-critical password hashing and email enumeration prevention."*
+- *"Structured logging with Serilog (Console + rolling File sinks, 7-day retention) — message templates with named properties, MachineName/ThreadId enrichment, automatic HTTP request logging."*
+
+### Test count
+**Total: 13 tests, all passing in ~5 seconds.**
+
+### Next session
+**Session 12 — Docker** — Containerize API + client with multi-stage Dockerfiles + docker-compose for local orchestration.
+
+---
+
+## Session 13 — GitHub Actions CI/CD Scope (planned)
 - Create `.github/workflows/ci-cd.yml`
 - Workflow steps:
   1. Checkout code on push to `main`

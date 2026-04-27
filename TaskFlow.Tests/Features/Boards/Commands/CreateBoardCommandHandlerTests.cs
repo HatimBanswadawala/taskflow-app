@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TaskFlow.Application.Features.Boards.Commands.CreateBoard;
 using TaskFlow.Domain.Entities;
@@ -19,7 +20,9 @@ public class CreateBoardCommandHandlerTests
             .Callback<Board>(b => capturedBoard = b)
             .ReturnsAsync((Board b) => b);
 
-        var handler = new CreateBoardCommandHandler(mockRepo.Object);
+        var handler = new CreateBoardCommandHandler(
+            mockRepo.Object,
+            NullLogger<CreateBoardCommandHandler>.Instance);
         var command = new CreateBoardCommand("Sprint Board", "Sample description", Guid.NewGuid());
 
         // ACT

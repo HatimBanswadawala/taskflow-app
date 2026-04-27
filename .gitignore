@@ -23,3 +23,7 @@ dist/
 # Build
 publish/
 out/
+
+# Serilog log files
+logs/
+*.log
