@@ -290,12 +290,10 @@ For a deep dive into every decision, tradeoff, and "why we did it this way" — 
 <td align="center"><b>Boards Dashboard</b></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/drag-drop.png" alt="Drag and Drop" /></td>
-<td><img src="docs/screenshots/swagger.png" alt="Swagger API Docs" /></td>
+<td colspan="2"><img src="docs/screenshots/swagger.png" alt="Swagger API Docs" /></td>
 </tr>
 <tr>
-<td align="center"><b>Drag-and-Drop Tasks</b></td>
-<td align="center"><b>OpenAPI / Swagger UI</b></td>
+<td colspan="2" align="center"><b>OpenAPI / Swagger UI — interactive API documentation</b></td>
 </tr>
 </table>
 
