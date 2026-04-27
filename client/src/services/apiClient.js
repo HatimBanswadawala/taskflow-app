@@ -2,10 +2,11 @@ import axios from 'axios'
 
 /**
  * Axios instance configured for TaskFlow API.
- * Base URL is empty because Vite's proxy forwards /api to the .NET backend.
+ * - In production (Vercel): uses VITE_API_URL env var pointing to Render.
+ * - In dev: falls back to '/api' — Vite proxy forwards to local .NET API.
  */
 const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
     'Content-Type': 'application/json',
   },
