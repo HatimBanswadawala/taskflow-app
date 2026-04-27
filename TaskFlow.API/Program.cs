@@ -120,12 +120,18 @@ builder.Services.AddOpenApi(options =>
     });
 });
 
-// CORS for React frontend
+// CORS for React frontend — config-driven
+// Local dev defaults to localhost:5173. Production reads from AllowedOrigins env var
+// (comma-separated). Example: "http://localhost:5173,https://taskflow-by-hatim.vercel.app"
+var allowedOrigins = builder.Configuration["AllowedOrigins"]
+    ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    ?? new[] { "http://localhost:5173" };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
     {
-        policy.WithOrigins("http://localhost:5173")
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
