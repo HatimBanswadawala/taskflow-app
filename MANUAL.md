@@ -1277,7 +1277,71 @@ Added `logs/` and `*.log` to prevent log files from being committed.
 **Total: 13 tests, all passing in ~5 seconds.**
 
 ### Next session
-**Session 12 — Docker** — Containerize API + client with multi-stage Dockerfiles + docker-compose for local orchestration.
+**Session 12 — Docker** — Multi-stage Dockerfile for the API. Frontend stays on Vercel (auto-builds from GitHub).
+
+---
+
+## Session 12: Docker — Multi-Stage Dockerfile for API
+**Date:** April 27, 2026
+**Goal:** Containerize TaskFlow.API for deployment to Render (free tier)
+
+### Scope decision
+- **API only** — multi-stage Dockerfile in `TaskFlow.API/Dockerfile`
+- **No client Dockerfile** — Vercel hosts React natively from the GitHub repo
+- **No docker-compose** — single-service compose adds no value for our deployment target
+
+### Multi-stage Dockerfile pattern
+```dockerfile
+# STAGE 1: BUILD (1 GB SDK image)
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+WORKDIR /src
+# Copy csproj first for layer caching, then restore
+COPY TaskFlow.Domain/*.csproj         TaskFlow.Domain/
+COPY TaskFlow.Application/*.csproj    TaskFlow.Application/
+COPY TaskFlow.Infrastructure/*.csproj TaskFlow.Infrastructure/
+COPY TaskFlow.API/*.csproj            TaskFlow.API/
+RUN dotnet restore TaskFlow.API/TaskFlow.API.csproj
+# Copy source and publish
+COPY . .
+RUN dotnet publish TaskFlow.API/TaskFlow.API.csproj -c Release -o /app/publish --no-restore
+
+# STAGE 2: RUNTIME (~200 MB aspnet image)
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "TaskFlow.API.dll"]
+```
+
+### Why multi-stage (interview gold)
+- **Stage 1** uses the .NET SDK image (~1 GB) — has the compiler. Used only at build time.
+- **Stage 2** uses the smaller ASP.NET runtime image (~200 MB) — no SDK, no source code.
+- Final image ships only Stage 2 → ~75% smaller, faster deploys, smaller attack surface.
+
+### Layer caching trick
+Copying `*.csproj` files BEFORE `COPY . .` means the slow `dotnet restore` layer is cached when only `.cs` files change. Builds become seconds instead of minutes.
+
+### .dockerignore added
+Skips `bin/`, `obj/`, `logs/`, `node_modules/`, `TaskFlow.Tests/`, `.git/` from the build context — keeps it small and fast.
+
+### Local Docker testing (skipped)
+Not run locally — corporate laptop restricts admin installs. Render will pull from GitHub and build the image on their servers (validated by CI in Session 13).
+
+### Key Docker commands (interview reference)
+| Command | Purpose |
+|---|---|
+| `docker build -t taskflow-api -f TaskFlow.API/Dockerfile .` | Build image (run from solution root) |
+| `docker run -d -p 8080:8080 taskflow-api` | Run container in background, map host:container ports |
+| `docker ps` | List running containers |
+| `docker logs taskflow-api` | View output (Serilog logs visible here) |
+| `docker stop taskflow-api && docker rm taskflow-api` | Stop + remove container |
+
+### Resume bullet
+*"Containerized .NET 9 API with a multi-stage Dockerfile — separate build (SDK) and runtime (aspnet) stages reduce final image size by ~75%. Layer-caching optimized via csproj-first COPY strategy. .dockerignore excludes bin/obj/logs to minimize build context."*
+
+### Next session
+**Session 13 — GitHub Actions CI/CD** — pipeline that auto-builds, tests, and Docker-builds on every push to main.
 
 ---
 

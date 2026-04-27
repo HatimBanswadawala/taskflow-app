@@ -1,0 +1,27 @@
+# Build artifacts — would bloat the image and break layer caching
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+
+# Logs (Serilog output) — should never go into the image
+**/logs/
+**/*.log
+
+# Node — the React client isn't part of the API image
+**/node_modules/
+**/dist/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Test project — not needed for production image
+TaskFlow.Tests/
+
+# OS / IDE noise
+.DS_Store
+Thumbs.db
+*.user
+*.suo
