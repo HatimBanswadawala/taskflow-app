@@ -44,10 +44,13 @@ export default function BoardDetail() {
   )
 
   // Fetch board with all its columns and tasks
+  // refetchInterval: auto-refresh every 5 seconds for collaborative live updates
   const { data: board, isLoading, error } = useQuery({
     queryKey: ['board', id],
     queryFn: () => boardApi.getById(id),
     enabled: !!id,
+    refetchInterval: 5000,         // poll every 5s for collaborative awareness
+    refetchIntervalInBackground: false, // stop polling when tab is hidden (saves bandwidth)
   })
 
   // Filter tasks by search — useMemo caches the result, only recomputes when dependencies change

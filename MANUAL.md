@@ -2,7 +2,7 @@
 
 > **What is this?** A step-by-step technical journal documenting every decision, command, and concept used to build TaskFlow from scratch. Written so that even 2-3 years from now, you can pick this up and rebuild a similar project — or understand exactly what was done and why.
 
-> **Tech Stack:** .NET 9 + React 18 + JavaScript (JSX) + EF Core InMemory + SignalR + Tailwind + shadcn/ui
+> **Tech Stack:** .NET 9 + React 18 + JavaScript (JSX) + EF Core InMemory + Tailwind CSS + @dnd-kit drag-drop + TanStack Query polling
 > **Note:** Frontend uses pure JavaScript (.jsx), NOT TypeScript. Resume skill focus: React + JS.
 
 > **Started:** April 11, 2026
@@ -197,7 +197,7 @@ dotnet add TaskFlow.API package Swashbuckle.AspNetCore.SwaggerUI --version 7.3.*
 1. **EF Core InMemory** — `AddDbContext<AppDbContext>` with `UseInMemoryDatabase("TaskFlowDb")`
 2. **Generic Repository** — `AddScoped(typeof(IRepository<>), typeof(Repository<>))` — open generic registration
 3. **OpenAPI** — .NET 9 built-in `AddOpenApi()` (no Swashbuckle for doc generation, only for UI)
-4. **CORS** — Configured for React Vite dev server (`http://localhost:5173`), AllowCredentials for SignalR later
+4. **CORS** — Configured for React Vite dev server (`http://localhost:5173`), AllowAnyHeader/AllowAnyMethod, AllowCredentials
 5. **Seed Data** — `SeedData.Initialize()` runs on startup inside a DI scope
 6. **Swagger UI** — Available at `/swagger` in Development mode
 7. **Health Check** — `GET /` returns app status
@@ -731,7 +731,7 @@ Replaced Vite default with TaskFlow landing:
 
 ### Step 6: Core Dependencies Installed
 ```bash
-npm install react-router-dom axios @tanstack/react-query @microsoft/signalr clsx tailwind-merge lucide-react
+npm install react-router-dom axios @tanstack/react-query clsx tailwind-merge lucide-react
 ```
 
 | Package | Purpose | Used in Session |
@@ -739,7 +739,6 @@ npm install react-router-dom axios @tanstack/react-query @microsoft/signalr clsx
 | react-router-dom | Routing, protected routes | 5 |
 | axios | HTTP client with JWT interceptors | 5 |
 | @tanstack/react-query | Server state management | 6 |
-| @microsoft/signalr | Real-time WebSocket client | 10 |
 | clsx | Conditional class names | All UI |
 | tailwind-merge | Dedupe conflicting Tailwind classes | All UI |
 | lucide-react | Icon library | All UI |
@@ -1047,6 +1046,61 @@ const sensors = useSensors(
 
 ---
 
-## Session 10: (Next)
-**Planned:** SignalR real-time — live updates across browsers when tasks move
+## Session 10: Polling-Based Live Updates
+**Date:** April 26, 2026
+**Goal:** Add collaborative awareness without WebSocket complexity
+
+### Why Polling Over WebSockets
+For a portfolio MVP targeting 16-20 LPA service/MNC roles, TanStack Query polling delivers 90% of the "live update" feel with 5% of the implementation complexity. WebSockets via SignalR were considered but skipped because:
+- Render free tier sometimes flaps WebSocket connections (cold starts)
+- Adds 1.5-2 hrs of WebSocket auth + reconnection complexity
+- 95% of recruiters won't open the live demo to test true real-time
+- Polling is universally reliable across all hosting platforms
+
+### Implementation
+Single change to `src/pages/BoardDetail.jsx` — added 2 props to the `useQuery` config:
+
+```js
+const { data: board } = useQuery({
+  queryKey: ['board', id],
+  queryFn: () => boardApi.getById(id),
+  refetchInterval: 5000,              // poll every 5s
+  refetchIntervalInBackground: false, // pause when tab hidden — saves bandwidth
+})
+```
+
+### What This Gives
+- Open 2 browser tabs → make a change in one → other tab reflects change within 5s
+- No WebSocket setup, no reconnection logic, no JWT-over-WS gymnastics
+- Resume bullet: "Implemented collaborative live updates via TanStack Query auto-refresh polling"
+- Mobile-friendly (no WebSocket battery drain)
+
+### Updated Final Roadmap
+
+| # | Session | Goal |
+|---|---------|------|
+| ✅ 10 | Polling-based live updates | Done — 5-minute change |
+| 11 | Tests + Serilog logging | 3-5 unit tests, structured logging |
+| 12 | Dockerfile + docker-compose | Containerize API + client |
+| 13 | GitHub Actions CI/CD | Automated build → test → docker → deploy pipeline |
+| 14 | Deploy to Vercel + Render | Frontend + backend live via CI/CD |
+| 15 | README + GitHub polish | Screenshots, GIFs, build badges, final docs |
+
+---
+
+## Session 11: (Next)
+**Planned:** Unit tests with xUnit + Moq, Serilog structured logging
+
+### Session 13 — GitHub Actions CI/CD Scope
+- Create `.github/workflows/ci-cd.yml`
+- Workflow steps:
+  1. Checkout code on push to `main`
+  2. Setup .NET 9
+  3. Restore + build solution
+  4. Run unit tests (from Session 11)
+  5. If pass → build Docker image
+  6. Push to GitHub Container Registry (GHCR)
+  7. Trigger Vercel webhook (React deploy)
+  8. Trigger Render deploy hook (API deploy)
+- Uses GitHub Secrets for: `RENDER_DEPLOY_HOOK`, `VERCEL_DEPLOY_HOOK`, JWT signing key
 
