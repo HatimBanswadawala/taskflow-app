@@ -4,7 +4,7 @@
 
 ### A full-stack Kanban task-management application — production-ready.
 
-[![CI](https://github.com/HatimBanswadawala/TaskFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/HatimBanswadawala/TaskFlow/actions/workflows/ci.yml)
+[![CI](https://github.com/HatimBanswadawala/taskflow-app/actions/workflows/ci.yml/badge.svg)](https://github.com/HatimBanswadawala/taskflow-app/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Multi--Stage-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
@@ -136,7 +136,7 @@ Demo credentials are pre-seeded — login and explore:
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/HatimBanswadawala/TaskFlow.git
+git clone https://github.com/HatimBanswadawala/taskflow-app.git
 cd TaskFlow
 ```
 
@@ -213,7 +213,7 @@ curl http://localhost:8080/
 
 ## ⚙️ CI/CD Pipeline
 
-[![CI](https://github.com/HatimBanswadawala/TaskFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/HatimBanswadawala/TaskFlow/actions/workflows/ci.yml)
+[![CI](https://github.com/HatimBanswadawala/taskflow-app/actions/workflows/ci.yml/badge.svg)](https://github.com/HatimBanswadawala/taskflow-app/actions/workflows/ci.yml)
 
 Every push to `main` triggers `.github/workflows/ci.yml`:
 
