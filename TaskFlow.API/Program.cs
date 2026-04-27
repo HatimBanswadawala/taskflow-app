@@ -155,14 +155,12 @@ using (var scope = app.Services.CreateScope())
 // 3. Middleware Pipeline
 // ──────────────────────────────────────────────
 
-if (app.Environment.IsDevelopment())
+// Swagger UI enabled in all environments — useful for portfolio API exploration
+app.MapOpenApi();
+app.UseSwaggerUI(options =>
 {
-    app.MapOpenApi();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/openapi/v1.json", "TaskFlow API v1");
-    });
-}
+    options.SwaggerEndpoint("/openapi/v1.json", "TaskFlow API v1");
+});
 
 // Auto-log every HTTP request: method, path, status code, duration
 app.UseSerilogRequestLogging();
